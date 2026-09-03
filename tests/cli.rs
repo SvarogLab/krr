@@ -2,6 +2,19 @@
 
 use std::process::Command;
 
+/// Runs the binary and returns success, stdout and stderr separately.
+fn krr_streams(args: &[&str]) -> (bool, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_krr"))
+        .args(args)
+        .output()
+        .expect("krr runs");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 fn krr(args: &[&str]) -> (bool, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_krr"))
         .args(args)
@@ -59,5 +72,18 @@ fn rejects_bad_arguments_before_touching_the_cluster() {
     assert!(
         output.contains("must start with https:// or http://"),
         "{output}"
+    );
+}
+
+#[test]
+fn logs_never_reach_stdout() {
+    // stdout carries the report, so a pipe into jq or a file must stay clean
+    let (ok, stdout, stderr) = krr_streams(&["simple", "-p", "http://127.0.0.1:1", "-f", "json"]);
+
+    assert!(!ok, "the scan cannot succeed without a metrics store");
+    assert!(stdout.is_empty(), "stdout carried log output: {stdout}");
+    assert!(
+        stderr.contains("127.0.0.1:1"),
+        "the failure was not reported: {stderr}"
     );
 }

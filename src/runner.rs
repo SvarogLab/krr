@@ -409,15 +409,13 @@ impl Runner {
         println!("{output}");
 
         if let Some(path) = self.output_path() {
-            // colored output is only meant for the terminal
-            let file_output = if formatter.colored {
-                let plain = format::find("table")?;
-                (plain.render)(result)?
-            } else {
-                output
+            // colors are meant for the terminal, never for a file
+            let file_output = match formatter.colored {
+                true => strip_ansi_escapes::strip_str(&output),
+                false => output,
             };
             tracing::info!("Writing output to file: {path}");
-            std::fs::write(&path, strip_ansi_escapes::strip_str(&file_output))
+            std::fs::write(&path, file_output)
                 .with_context(|| format!("could not write {path}"))?;
         }
         Ok(())
@@ -452,7 +450,8 @@ pub fn round_value(value: RecValue, resource: ResourceType, config: &Config) -> 
     RecValue::Val(rounded.max(minimum))
 }
 
-/// "simple_limit" -> "Simple_Limit", as upstream titles the description.
+/// "simple_limit" -> "Simple Limit". Upstream's `str.title()` keeps the underscore;
+/// the description reads better without it.
 fn title_case(name: &str) -> String {
     name.split('_')
         .map(|word| {

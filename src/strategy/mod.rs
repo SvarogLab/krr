@@ -204,6 +204,10 @@ fn max_value(series: &PodSeries) -> Option<f64> {
 
 /// numpy's default (linear interpolation) percentile, so recommendations match upstream.
 pub fn percentile(values: &[f64], percentile: f64) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+
     let mut values = values.to_vec();
     values.sort_by(f64::total_cmp);
 
@@ -413,6 +417,8 @@ pub(crate) mod tests {
         // numpy.percentile([1,2,3,4], 66) == 2.98
         assert!((percentile(&values, 66.0) - 2.98).abs() < 1e-9);
         assert_eq!(percentile(&[5.0], 50.0), 5.0);
+        // a series without samples must not index into an empty slice
+        assert!(percentile(&[], 50.0).is_nan());
     }
 
     #[test]

@@ -105,8 +105,22 @@ written for upstream fails loudly instead of quietly doing less.
   needs, but it always sends through its own `reqwest::Client`. Auto-discovery from outside the
   cluster reaches the store through the Kubernetes API server's service proxy, which has to go
   through the kube client to reuse its TLS and credentials, so the transport is ours.
+- **Logging**: logs always go to stderr, so a report piped or redirected from stdout stays
+  parseable. Upstream logs to stdout unless `--logtostderr` is passed; the flag is still
+  accepted here for compatibility.
 - **Report order**: rows are sorted by cluster, namespace, workload and container; upstream
   prints them in discovery order, grouped by kind.
+- **Retries** stop at a 4xx: a query the store rejected fails the same way however often it is
+  sent. Upstream retries every failure five times.
+- **`--prometheus-cluster-label` requires `--prometheus-label`**, which names the label to
+  match on. Upstream accepts the value alone and builds a selector from an unset label name.
+- **Jobs carrying a grouping label** stay in the `Job` list when `GroupedJob` is not among the
+  scanned kinds. Upstream removes them from the Job list regardless, so `-r Job` together with
+  `--job-grouping-labels` hides them from the report entirely.
+- **Job paging** gives every namespace its own page budget; upstream shares one budget across
+  namespaces, so a job-heavy namespace can starve the ones listed after it.
+- **The strategy name in the report description** reads `Simple Limit`; upstream's `str.title()`
+  keeps the underscore and writes `Simple_Limit`.
 - **HTML output** is a standalone document built directly, not an export of the terminal table.
 - **`ResourceAllocations.info`** always serializes both resource keys; upstream emits `{}` when
   the map is empty. The rest of the JSON report matches.

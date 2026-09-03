@@ -26,8 +26,9 @@ async fn main() -> Result<()> {
     std::process::exit(exit_code);
 }
 
-/// Logs go to stderr by default so that the report stays pipeable.
+/// Logs always go to stderr, so the report on stdout stays pipeable.
 fn init_logging(config: &krr::config::Config) {
+    // `--logtostderr` is accepted for compatibility with upstream command lines
     let level = match (config.quiet, config.verbose) {
         (true, _) => "krr=error",
         (_, true) => "krr=debug",
@@ -35,14 +36,10 @@ fn init_logging(config: &krr::config::Config) {
     };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
-    let builder = tracing_subscriber::fmt()
+    tracing_subscriber::fmt()
         .with_env_filter(filter)
         .without_time()
-        .with_target(false);
-
-    if config.log_to_stderr {
-        builder.with_writer(std::io::stderr).init();
-    } else {
-        builder.init();
-    }
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .init();
 }

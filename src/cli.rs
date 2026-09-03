@@ -239,7 +239,7 @@ pub struct RunArgs {
     #[arg(short = 'q', long, help_heading = "Logging Settings")]
     pub quiet: bool,
 
-    /// Send logs to stderr instead of stdout.
+    /// Accepted for compatibility: logs always go to stderr.
     #[arg(long = "logtostderr", help_heading = "Logging Settings")]
     pub log_to_stderr: bool,
 }
@@ -304,6 +304,12 @@ impl RunArgs {
             bail!("--exclude-severity works only with --formatter csv");
         }
         format::find(&self.format)?;
+
+        if self.prometheus_cluster_label.is_some() && self.prometheus_label.is_none() {
+            bail!(
+                "--prometheus-cluster-label needs --prometheus-label to say which label                  tells the clusters apart"
+            );
+        }
 
         let prometheus_url = match &self.prometheus_url {
             Some(url) => Some(config::parse_prometheus_url(url)?),
@@ -507,6 +513,23 @@ mod tests {
         );
         assert_eq!(config.job_grouping_limit, 50);
         assert_eq!(config.discovery_job_batch_size, 1000);
+    }
+
+    #[test]
+    fn a_cluster_label_value_needs_its_label_name() {
+        // otherwise the value would be accepted and silently filter nothing
+        assert!(parse(&["krr", "simple", "-l", "prod"]).is_err());
+        assert!(
+            parse(&[
+                "krr",
+                "simple",
+                "-l",
+                "prod",
+                "--prometheus-label",
+                "cluster"
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

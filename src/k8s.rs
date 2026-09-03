@@ -111,9 +111,11 @@ impl ClusterLoader {
             let jobs = self.list_jobs(&namespaces).await;
 
             if wants_jobs {
+                // a grouped job is only left out of the Job list when its group is reported
+                let grouped: &[String] = if wants_groups { &grouping_labels } else { &[] };
                 objects.extend(
                     jobs.iter()
-                        .filter(|job| !is_job_grouped(job, &grouping_labels))
+                        .filter(|job| !is_job_grouped(job, grouped))
                         .flat_map(|job| {
                             // jobs of a cronjob are covered by their cronjob
                             if owned_by_cron_job(&job.metadata) {
@@ -170,7 +172,7 @@ impl ClusterLoader {
         };
 
         let mut jobs = Vec::new();
-        let mut pages = 0;
+        let mut total_pages = 0;
 
         for namespace in targets {
             let api: Api<Job> = match namespace {
@@ -178,6 +180,8 @@ impl ClusterLoader {
                 Some(namespace) => Api::namespaced(self.client.clone(), namespace),
             };
 
+            // every namespace gets its own budget, so a job-heavy one cannot starve the rest
+            let mut pages = 0;
             let mut token: Option<String> = None;
             while pages < self.config.discovery_job_max_batches {
                 let mut params = self
@@ -199,6 +203,7 @@ impl ClusterLoader {
                 };
 
                 pages += 1;
+                total_pages += 1;
                 jobs.extend(page.items);
 
                 token = page.metadata.continue_.filter(|token| !token.is_empty());
@@ -206,9 +211,16 @@ impl ClusterLoader {
                     break;
                 }
             }
+
+            if token.is_some() {
+                tracing::warn!(
+                    "stopped listing Jobs in {} after {pages} pages (--discovery-job-max-batches);                      the scan is missing the rest",
+                    namespace.unwrap_or("the cluster")
+                );
+            }
         }
 
-        tracing::debug!("found {} jobs in {pages} page(s)", jobs.len());
+        tracing::debug!("found {} jobs in {total_pages} page(s)", jobs.len());
         jobs
     }
 
@@ -432,42 +444,39 @@ impl ClusterLoader {
         };
 
         let params = self.list_params();
-        let items = match namespaces {
-            Filter::All => {
-                Api::<DynamicObject>::all_with(self.client.clone(), &resource)
-                    .list(&params)
-                    .await
-            }
-            Filter::Only(namespaces) => {
-                let mut items = Vec::new();
-                let mut result = Ok(());
-                for namespace in namespaces {
+        let apis: Vec<(Option<&str>, Api<DynamicObject>)> = match namespaces {
+            Filter::All => vec![(
+                None,
+                Api::<DynamicObject>::all_with(self.client.clone(), &resource),
+            )],
+            Filter::Only(namespaces) => namespaces
+                .iter()
+                .map(|namespace| {
                     let api = Api::<DynamicObject>::namespaced_with(
                         self.client.clone(),
                         namespace,
                         &resource,
                     );
-                    match api.list(&params).await {
-                        Ok(list) => items.extend(list.items),
-                        Err(error) => result = Err(error),
-                    }
-                }
-                result.map(|_| kube::core::ObjectList {
-                    items,
-                    metadata: Default::default(),
-                    types: Default::default(),
+                    (Some(namespace.as_str()), api)
                 })
-            }
+                .collect(),
         };
 
-        let items = match items {
-            Ok(list) => list.items,
-            Err(error) => {
-                // the CRD is simply not installed in most clusters
-                tracing::debug!("{kind} API not available: {error:#}");
-                return Vec::new();
+        // one namespace failing must not drop what the others returned
+        let mut items = Vec::new();
+        for (namespace, api) in apis {
+            match api.list(&params).await {
+                Ok(list) => items.extend(list.items),
+                // in most clusters the CRD is simply not installed
+                Err(error) if is_missing_api(&error) => {
+                    tracing::debug!("{kind} API not available");
+                }
+                Err(error) => tracing::warn!(
+                    "could not list {kind}s in {}: {error:#}",
+                    namespace.unwrap_or("the cluster")
+                ),
             }
-        };
+        }
 
         items
             .iter()
@@ -820,10 +829,13 @@ pub fn hpa_entry_v1(hpa: &HorizontalPodAutoscalerV1) -> Option<(HpaKey, HpaData)
 
 /// Whether an API call failed because the resource type does not exist.
 fn is_not_found(error: &anyhow::Error) -> bool {
-    matches!(
-        error.downcast_ref::<kube::Error>(),
-        Some(kube::Error::Api(response)) if response.code == 404
-    )
+    error
+        .downcast_ref::<kube::Error>()
+        .is_some_and(is_missing_api)
+}
+
+fn is_missing_api(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 404)
 }
 
 /// Containers and pod selector of a custom resource, read from its JSON.

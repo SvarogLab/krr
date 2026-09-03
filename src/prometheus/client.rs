@@ -145,44 +145,55 @@ impl PrometheusClient {
         Ok(())
     }
 
-    /// Runs a request, retrying transient failures.
+    /// Runs a request, retrying the failures that can pass.
     async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<String> {
-        let mut last_error = None;
-        for attempt in 0..=self.retries {
-            match self.get_once(path, params).await {
+        let mut attempt = 0;
+        loop {
+            let failure = match self.get_once(path, params).await {
                 Ok(body) => return Ok(body),
-                Err(error) => {
-                    tracing::debug!(
-                        "{} request failed (attempt {}): {error:#}",
-                        self.name,
-                        attempt + 1
-                    );
-                    last_error = Some(error);
-                }
+                Err(failure) => failure,
+            };
+
+            // a rejected query fails the same way however often it is sent
+            if !failure.retryable || attempt == self.retries {
+                return Err(failure.error);
             }
+
+            tracing::debug!(
+                "{} request failed (attempt {}): {:#}",
+                self.name,
+                attempt + 1,
+                failure.error
+            );
             // upstream waits a random 2-10s; a short exponential backoff serves the same purpose
             tokio::time::sleep(Duration::from_millis(200 * 2u64.pow(attempt.min(5)))).await;
+            attempt += 1;
         }
-        Err(last_error.expect("at least one attempt was made"))
     }
 
-    async fn get_once(&self, path: &str, params: &[(&str, String)]) -> Result<String> {
+    async fn get_once(&self, path: &str, params: &[(&str, String)]) -> Result<String, Failure> {
         match &self.transport {
             Transport::Direct { client, base_url } => {
                 let response = client
                     .get(format!("{base_url}{path}"))
                     .query(params)
                     .send()
-                    .await?;
+                    .await
+                    .map_err(|error| Failure::retryable(error.into()))?;
+
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
                 if !status.is_success() {
-                    bail!(
+                    let error = anyhow::anyhow!(
                         "{} returned {}: {}",
                         self.name,
                         status.as_u16(),
                         body.trim()
                     );
+                    return Err(Failure {
+                        error,
+                        retryable: is_retryable(status.as_u16()),
+                    });
                 }
                 Ok(body)
             }
@@ -199,11 +210,51 @@ impl PrometheusClient {
                 } else {
                     format!("{base_path}{path}?{query}")
                 };
-                let request = http::Request::get(uri).body(Vec::new())?;
-                Ok(client.request_text(request).await?)
+
+                let request = http::Request::get(uri)
+                    .body(Vec::new())
+                    .map_err(|error| Failure::permanent(error.into()))?;
+
+                client.request_text(request).await.map_err(|error| {
+                    let retryable = match &error {
+                        kube::Error::Api(response) => is_retryable(response.code),
+                        _ => true,
+                    };
+                    Failure {
+                        error: error.into(),
+                        retryable,
+                    }
+                })
             }
         }
     }
+}
+
+/// A failed request, and whether sending it again could help.
+struct Failure {
+    error: anyhow::Error,
+    retryable: bool,
+}
+
+impl Failure {
+    fn retryable(error: anyhow::Error) -> Self {
+        Failure {
+            error,
+            retryable: true,
+        }
+    }
+
+    fn permanent(error: anyhow::Error) -> Self {
+        Failure {
+            error,
+            retryable: false,
+        }
+    }
+}
+
+/// Server errors and rate limits can pass; a rejected request cannot.
+fn is_retryable(status: u16) -> bool {
+    status == 429 || !(400..500).contains(&status)
 }
 
 // ------------------------------- response parsing -------------------------------
@@ -527,6 +578,42 @@ mod tests {
         client.retries = 1;
         let error = client.query("up").await.unwrap_err().to_string();
         assert!(error.contains("500"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn rejected_queries_are_not_retried() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("parse error"))
+            .mount(&server)
+            .await;
+
+        let error = client(&server)
+            .await
+            .query("not a query")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("400"), "{error}");
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "a 400 means the query itself is wrong, so sending it again cannot help"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_errors_are_retried_to_the_limit() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let mut client = client(&server).await;
+        client.retries = 2;
+        assert!(client.query("up").await.is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
     }
 
     #[tokio::test]

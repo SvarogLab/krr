@@ -657,3 +657,102 @@ async fn a_failing_kind_does_not_abort_the_scan() {
         .unwrap();
     assert_eq!(names(&objects), vec!["Deployment/default/web"]);
 }
+
+#[tokio::test]
+async fn grouped_jobs_stay_visible_when_the_group_kind_is_filtered_out() {
+    let server = MockServer::start().await;
+    serve(
+        &server,
+        "/apis/batch/v1/jobs",
+        list(vec![job("batch-1", "default", json!({"app": "etl"}), None)]),
+    )
+    .await;
+    serve_empty(&server).await;
+
+    // the group cannot be reported, so the job must still appear on its own
+    let config = Config {
+        resources: Filter::Only(vec![Kind::Job]),
+        job_grouping_labels: Some(vec!["app".into()]),
+        ..Default::default()
+    };
+    let objects = loader(&server, config)
+        .list_scannable_objects()
+        .await
+        .unwrap();
+
+    assert_eq!(names(&objects), vec!["Job/default/batch-1"]);
+}
+
+#[tokio::test]
+async fn a_namespace_that_denies_a_custom_resource_does_not_hide_the_others() {
+    let server = MockServer::start().await;
+    serve(
+        &server,
+        "/apis/argoproj.io/v1alpha1/namespaces/allowed/rollouts",
+        list(vec![json!({
+            "metadata": {"name": "canary", "namespace": "allowed"},
+            "spec": {
+                "selector": {"matchLabels": {"app": "canary"}},
+                "template": {"spec": {"containers": [container("app", "100m", "256Mi")]}},
+            },
+        })]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/apis/argoproj.io/v1alpha1/namespaces/denied/rollouts",
+        ))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    serve_empty(&server).await;
+
+    let config = Config {
+        namespaces: Filter::Only(vec!["allowed".into(), "denied".into()]),
+        ..Default::default()
+    };
+    let objects = loader(&server, config)
+        .list_scannable_objects()
+        .await
+        .unwrap();
+
+    assert_eq!(names(&objects), vec!["Rollout/allowed/canary"]);
+}
+
+#[tokio::test]
+async fn each_namespace_gets_its_own_job_page_budget() {
+    let server = MockServer::start().await;
+    // the first namespace never stops paging; the second one must still be read
+    Mock::given(method("GET"))
+        .and(path("/apis/batch/v1/namespaces/busy/jobs"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(page(vec![job("endless", "busy", json!({}), None)], "next")),
+        )
+        .mount(&server)
+        .await;
+    serve(
+        &server,
+        "/apis/batch/v1/namespaces/quiet/jobs",
+        list(vec![job("nightly", "quiet", json!({}), None)]),
+    )
+    .await;
+    serve_empty(&server).await;
+
+    let config = Config {
+        namespaces: Filter::Only(vec!["busy".into(), "quiet".into()]),
+        discovery_job_batch_size: 1,
+        discovery_job_max_batches: 2,
+        ..Default::default()
+    };
+    let objects = loader(&server, config)
+        .list_scannable_objects()
+        .await
+        .unwrap();
+
+    assert!(
+        names(&objects).contains(&"Job/quiet/nightly".to_string()),
+        "{:?}",
+        names(&objects)
+    );
+}
