@@ -101,6 +101,10 @@ written for upstream fails loudly instead of quietly doing less.
 
 - **Prometheus client**: a thin client over `reqwest` replaces `prometrix`. Failed requests are
   retried with exponential backoff instead of a random 2-10 second wait.
+  `prometheus-http-query` is the one Rust crate for the query API and covers the endpoints KRR
+  needs, but it always sends through its own `reqwest::Client`. Auto-discovery from outside the
+  cluster reaches the store through the Kubernetes API server's service proxy, which has to go
+  through the kube client to reuse its TLS and credentials, so the transport is ours.
 - **Report order**: rows are sorted by cluster, namespace, workload and container; upstream
   prints them in discovery order, grouped by kind.
 - **HTML output** is a standalone document built directly, not an export of the terminal table.
