@@ -20,6 +20,9 @@ async fn main() -> Result<()> {
     let strategy = strategy::find(&config.strategy, &strategy_args)?;
     let exit_code = Runner::new(config, strategy).run().await;
 
+    // the report is written to stdout, so make sure it is out before exiting
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
     std::process::exit(exit_code);
 }
 

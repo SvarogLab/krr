@@ -13,7 +13,7 @@ use crate::config::Config;
 use crate::format;
 use crate::k8s::{ClusterLoader, list_clusters};
 use crate::model::{
-    ByResource, K8sObject, PodWarning, RecValue, ResourceAllocations, ResourceType, Selector,
+    ByResource, K8sObject, PodWarning, RecValue, ResourceAllocations, ResourceType,
 };
 use crate::prometheus::discovery;
 use crate::prometheus::loader::MetricsLoader;
@@ -483,9 +483,6 @@ fn strip_ansi(text: &str) -> String {
     }
     out
 }
-
-/// Selectors of an allocation, exposed for tests of the rounding rules.
-pub const SELECTORS: [Selector; 2] = Selector::ALL;
 
 #[cfg(test)]
 mod tests {
