@@ -1,6 +1,7 @@
 //! Reading usage history from Prometheus and its compatible stores.
 
 pub mod client;
+pub mod discovery;
 pub mod loader;
 pub mod metrics;
 
