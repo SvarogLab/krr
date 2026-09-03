@@ -1,0 +1,79 @@
+{
+    "scans": [
+        {
+            "object": {
+                "cluster": "mock-cluster",
+                "name": "mock-object-1",
+                "container": "mock-container-1",
+                "pods": [
+                    { "name": "mock-pod-1", "deleted": false },
+                    { "name": "mock-pod-2", "deleted": false },
+                    { "name": "mock-pod-3", "deleted": true }
+                ],
+                "hpa": null,
+                "namespace": "default",
+                "kind": "Deployment",
+                "allocations": {
+                    "requests": { "cpu": "50m", "memory": "2048Mi" },
+                    "limits": { "cpu": 2.0, "memory": 2.0 },
+                    "info": {}
+                },
+                "warnings": []
+            },
+            "recommended": {
+                "requests": {
+                    "cpu": { "value": 0.0065, "severity": "UNKNOWN" },
+                    "memory": { "value": 0.5, "severity": "CRITICAL" }
+                },
+                "limits": {
+                    "cpu": { "value": "?", "severity": "UNKNOWN" },
+                    "memory": { "value": 0.5, "severity": "CRITICAL" }
+                },
+                "info": {
+                    "cpu": "Not enough data",
+                    "memory": "Not enough data"
+                }
+            },
+            "severity": "CRITICAL"
+        }
+    ],
+    "score": 100,
+    "resources": ["cpu", "memory"],
+    "description": "tests data",
+    "strategy": {
+        "name": "simple",
+        "settings": {
+            "history_duration": 336.0,
+            "timeframe_duration": 1.25,
+            "cpu_percentile": 95.0,
+            "memory_buffer_percentage": 15.0,
+            "points_required": 100,
+            "allow_hpa": false,
+            "use_oomkill_data": false,
+            "oom_memory_buffer_percentage": 25.0
+        }
+    },
+    "errors": [],
+    "clusterSummary": {},
+    "config": {
+        "quiet": false,
+        "verbose": false,
+        "clusters": [],
+        "kubeconfig": null,
+        "namespaces": "*",
+        "resources": [],
+        "selector": null,
+        "cpu_min_value": 10,
+        "memory_min_value": 100,
+        "prometheus_url": null,
+        "max_workers": 10,
+        "format": "csv",
+        "show_cluster_name": false,
+        "strategy": "simple",
+        "log_to_stderr": false,
+        "width": null,
+        "file_output": null,
+        "inside_cluster": false,
+        "file_output_dynamic": false
+    }
+}
