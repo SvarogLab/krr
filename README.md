@@ -93,7 +93,8 @@ The port was written test-first. Where behaviour is observable, the tests pin it
   `resource_units.py` (including its quirks, such as `1024` printing unscaled);
 - the CSV formatter reproduces the golden rows of upstream's
   `tests/formatters/test_csv_formatter.py`;
-- percentiles interpolate exactly like `numpy.percentile`;
+- percentiles interpolate exactly like `numpy.percentile`, which is also what
+  Prometheus's `quantile_over_time` does;
 - the Prometheus client and loader are tested against a mock server (`wiremock`), including
   retries, pod batching, job de-duplication and pod discovery;
 - the Kubernetes layer is tested against a mock API server: every workload kind, the filters,

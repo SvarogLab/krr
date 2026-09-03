@@ -62,7 +62,7 @@ impl MetricsLoader {
                     }
                 }
                 Ok(series) => {
-                    data.insert(metric.key().to_string(), series);
+                    data.insert(metric.key(), series);
                 }
                 Err(error) => {
                     tracing::error!("failed to gather {} for {object}: {error:#}", metric.key());
@@ -428,7 +428,7 @@ mod tests {
             )
             .await;
 
-        let series = &data[Metric::MaxMemory.key()];
+        let series = &data[&Metric::MaxMemory.key()];
         assert_eq!(series["web-1"], vec![(1700000000.0, 0.5)]);
         assert_eq!(series["web-2"], vec![(1700000000.0, 1.5)]);
     }

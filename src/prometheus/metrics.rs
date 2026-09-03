@@ -33,15 +33,17 @@ pub enum Metric {
 }
 
 impl Metric {
-    /// Key the metric is stored under, matching the upstream loader class names.
-    pub fn key(self) -> &'static str {
+    /// Key the metric is stored under, after the upstream loader class names.
+    ///
+    /// A strategy may ask for two percentiles at once, so that one carries its value.
+    pub fn key(self) -> String {
         match self {
-            Metric::PercentileCpu(_) => "PercentileCPULoader",
-            Metric::Cpu => "CPULoader",
-            Metric::CpuAmount => "CPUAmountLoader",
-            Metric::MaxMemory => "MaxMemoryLoader",
-            Metric::MemoryAmount => "MemoryAmountLoader",
-            Metric::MaxOomKilledMemory => "MaxOOMKilledMemoryLoader",
+            Metric::PercentileCpu(percentile) => format!("PercentileCPULoader({percentile})"),
+            Metric::Cpu => "CPULoader".to_string(),
+            Metric::CpuAmount => "CPUAmountLoader".to_string(),
+            Metric::MaxMemory => "MaxMemoryLoader".to_string(),
+            Metric::MemoryAmount => "MemoryAmountLoader".to_string(),
+            Metric::MaxOomKilledMemory => "MaxOOMKilledMemoryLoader".to_string(),
         }
     }
 
@@ -187,7 +189,12 @@ mod tests {
 
     #[test]
     fn keys_match_upstream_loader_names() {
-        assert_eq!(Metric::PercentileCpu(95.0).key(), "PercentileCPULoader");
+        // the percentile is part of the key: one strategy loads two of them
+        assert_eq!(Metric::PercentileCpu(95.0).key(), "PercentileCPULoader(95)");
+        assert_ne!(
+            Metric::PercentileCpu(66.0).key(),
+            Metric::PercentileCpu(96.0).key()
+        );
         assert_eq!(Metric::Cpu.key(), "CPULoader");
         assert_eq!(Metric::CpuAmount.key(), "CPUAmountLoader");
         assert_eq!(Metric::MaxMemory.key(), "MaxMemoryLoader");

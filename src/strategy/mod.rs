@@ -172,7 +172,7 @@ impl Default for StrategyArgs {
 
 /// Series of a metric, or an empty map when it was not loaded.
 pub fn series(data: &MetricsData, metric: Metric) -> Option<&PodSeries> {
-    data.get(metric.key()).filter(|series| !series.is_empty())
+    data.get(&metric.key()).filter(|series| !series.is_empty())
 }
 
 /// Number of data points a metric reported, summed over the pods.
@@ -200,6 +200,11 @@ pub fn all_values(series: &PodSeries) -> Vec<f64> {
 /// The largest value of any pod, or `None` when there are no samples.
 fn max_value(series: &PodSeries) -> Option<f64> {
     all_values(series).into_iter().reduce(f64::max)
+}
+
+/// The largest value any pod reported for a metric, or `NaN` when it carries none.
+pub fn peak(data: &MetricsData, metric: Metric) -> f64 {
+    series(data, metric).and_then(max_value).unwrap_or(f64::NAN)
 }
 
 /// numpy's default (linear interpolation) percentile, so recommendations match upstream.

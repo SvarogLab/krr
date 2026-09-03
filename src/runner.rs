@@ -264,7 +264,7 @@ impl Runner {
                 .collect();
             let loaded = expected
                 .iter()
-                .any(|metric| data.contains_key(metric.key()));
+                .any(|metric| data.contains_key(&metric.key()));
             if !expected.is_empty() && !loaded {
                 object.add_warning(warning);
             }

@@ -9,8 +9,7 @@ use crate::prometheus::MetricsData;
 use crate::prometheus::metrics::Metric;
 
 use super::{
-    CommonSettings, Strategy, StrategyRecommendation, all_values, memory_recommendation,
-    percentile, precondition, series,
+    CommonSettings, Strategy, StrategyRecommendation, memory_recommendation, peak, precondition,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -81,11 +80,15 @@ impl Strategy for SimpleLimitStrategy {
 
     fn metrics(&self) -> Vec<Metric> {
         let mut metrics = vec![
-            Metric::Cpu,
+            Metric::PercentileCpu(self.settings.cpu_request),
             Metric::MaxMemory,
             Metric::CpuAmount,
             Metric::MemoryAmount,
         ];
+        // the same percentile twice would be the same query
+        if self.settings.cpu_limit != self.settings.cpu_request {
+            metrics.insert(1, Metric::PercentileCpu(self.settings.cpu_limit));
+        }
         if self.settings.common.use_oomkill_data {
             metrics.push(Metric::MaxOomKilledMemory);
         }
@@ -94,20 +97,22 @@ impl Strategy for SimpleLimitStrategy {
 
     fn run(&self, data: &MetricsData, object: &K8sObject) -> ByResource<StrategyRecommendation> {
         let common = &self.settings.common;
+        let request_metric = Metric::PercentileCpu(self.settings.cpu_request);
+        let limit_metric = Metric::PercentileCpu(self.settings.cpu_limit);
 
         let cpu = precondition(
             data,
-            Metric::Cpu,
+            request_metric,
             Metric::CpuAmount,
             object,
             ResourceType::Cpu,
             common,
         )
         .unwrap_or_else(|| {
-            let values = all_values(series(data, Metric::Cpu).expect("checked above"));
+            // Prometheus reduced each pod to one value, so the busiest pod sets the size
             StrategyRecommendation {
-                request: RecValue::from_f64(percentile(&values, self.settings.cpu_request)),
-                limit: RecValue::from_f64(percentile(&values, self.settings.cpu_limit)),
+                request: RecValue::from_f64(peak(data, request_metric)),
+                limit: RecValue::from_f64(peak(data, limit_metric)),
                 info: None,
             }
         });
@@ -143,9 +148,19 @@ mod tests {
         }
     }
 
-    fn metrics(cpu: Vec<f64>) -> MetricsData {
+    /// The percentiles as Prometheus returns them: one value per pod, per percentile.
+    fn metrics(request: Vec<f64>, limit: Vec<f64>) -> MetricsData {
+        let pods = |values: Vec<f64>| -> Vec<(&str, Vec<f64>)> {
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(i, value)| (["web-1", "web-2", "web-3"][i], vec![value]))
+                .collect()
+        };
+
         let mut entries = vec![
-            (Metric::Cpu, vec![("web-1", cpu)]),
+            (Metric::PercentileCpu(66.0), pods(request)),
+            (Metric::PercentileCpu(96.0), pods(limit)),
             (Metric::MaxMemory, vec![("web-1", vec![100.0])]),
         ];
         entries.extend(enough_points(100.0));
@@ -172,21 +187,20 @@ mod tests {
 
     #[test]
     fn requests_and_limits_come_from_two_percentiles() {
-        let data = metrics(vec![1.0, 2.0, 3.0, 4.0]);
+        // three pods, each reduced by prometheus to its own percentile
+        let data = metrics(vec![0.1, 0.3, 0.2], vec![0.4, 0.9, 0.5]);
         let result = SimpleLimitStrategy::new(settings())
             .unwrap()
             .run(&data, &object());
 
-        // numpy.percentile([1,2,3,4], 66) == 2.98, ... 96) == 3.88
-        let request = result[ResourceType::Cpu].request.as_f64().unwrap();
-        let limit = result[ResourceType::Cpu].limit.as_f64().unwrap();
-        assert!((request - 2.98).abs() < 1e-9, "{request}");
-        assert!((limit - 3.88).abs() < 1e-9, "{limit}");
+        // the busiest pod sets the size of a replica
+        assert_eq!(result[ResourceType::Cpu].request, RecValue::Val(0.3));
+        assert_eq!(result[ResourceType::Cpu].limit, RecValue::Val(0.9));
     }
 
     #[test]
     fn memory_behaves_like_the_simple_strategy() {
-        let data = metrics(vec![1.0]);
+        let data = metrics(vec![1.0], vec![2.0]);
         let result = SimpleLimitStrategy::new(settings())
             .unwrap()
             .run(&data, &object());
@@ -206,14 +220,28 @@ mod tests {
     }
 
     #[test]
-    fn loads_the_raw_cpu_series() {
+    fn asks_prometheus_for_both_percentiles() {
         let strategy = SimpleLimitStrategy::new(settings()).unwrap();
-        assert!(strategy.metrics().contains(&Metric::Cpu));
-        assert!(
-            !strategy
-                .metrics()
+        let metrics = strategy.metrics();
+
+        assert!(metrics.contains(&Metric::PercentileCpu(66.0)));
+        assert!(metrics.contains(&Metric::PercentileCpu(96.0)));
+        // the raw series is what ran into the point limit of a range query
+        assert!(!metrics.contains(&Metric::Cpu));
+
+        // one query is enough when both percentiles are the same
+        let same = SimpleLimitStrategy::new(SimpleLimitSettings {
+            cpu_request: 90.0,
+            cpu_limit: 90.0,
+            ..settings()
+        })
+        .unwrap();
+        assert_eq!(
+            same.metrics()
                 .iter()
-                .any(|m| matches!(m, Metric::PercentileCpu(_)))
+                .filter(|m| matches!(m, Metric::PercentileCpu(_)))
+                .count(),
+            1
         );
 
         let json = strategy.settings_json();

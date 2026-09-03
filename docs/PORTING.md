@@ -110,12 +110,21 @@ written for upstream fails loudly instead of quietly doing less.
   accepted here for compatibility.
 - **Report order**: rows are sorted by cluster, namespace, workload and container; upstream
   prints them in discovery order, grouped by kind.
-- **Range queries keep their step inside Prometheus's point budget**: with the default two
-  weeks of history at a 1.25 minute step a range query asks for 16k points, and every
-  Prometheus refuses more than 11k, so the step is widened and a warning explains it. It only
-  affects `simple_limit`, the one strategy that reads a raw series instead of letting
-  Prometheus reduce it. Upstream applies the same workaround only behind `--eks-managed-prom`,
-  so its `simple_limit` fails against a default Prometheus.
+- **`simple_limit` asks Prometheus for both percentiles** instead of downloading the raw
+  series and computing them locally. Upstream pulls two weeks of samples through a range
+  query, which asks for 16k points where Prometheus returns at most 11k, so upstream's
+  `simple_limit` fails against a default Prometheus (it patches the step only behind
+  `--eks-managed-prom`). Two `quantile_over_time` queries return one value per pod each, which
+  keeps the full resolution and moves two numbers instead of tens of thousands.
+  It also changes the result for a workload with several pods: upstream pools the samples of
+  every pod and takes one percentile of the pool, while a per-pod percentile followed by the
+  maximum sizes a replica after its busiest pod, exactly as the `simple` strategy already
+  does. On a three-pod workload the pooled 66th percentile read 20m where the per-pod maximum
+  reads 24m.
+- **Range queries keep their step inside Prometheus's point budget**: a range query for the
+  whole history would ask for more points than Prometheus returns, so its step is widened and
+  a warning explains the lost resolution. No strategy reads a raw series any more, so this now
+  only guards the ported `CPULoader`.
 - **Retries** stop at a 4xx: a query the store rejected fails the same way however often it is
   sent. Upstream retries every failure five times.
 - **`--prometheus-cluster-label` requires `--prometheus-label`**, which names the label to
@@ -140,7 +149,8 @@ written for upstream fails loudly instead of quietly doing less.
   its quirks (a value is only scaled up once the next unit reaches ten).
 - The CSV formatter reproduces the golden rows of upstream's
   `tests/formatters/test_csv_formatter.py`.
-- Percentiles interpolate exactly like `numpy.percentile` with its default method.
+- Percentiles use linear interpolation between samples, the method both `numpy.percentile` and
+  Prometheus's `quantile_over_time` apply by default.
 - The Prometheus client and loader run against a mock HTTP server: retries, pod batching, job
   de-duplication, pod discovery, history range and cluster summary.
 - The Kubernetes layer runs against a mock API server: every workload kind, filters, the HPA
