@@ -417,7 +417,7 @@ impl Runner {
                 output
             };
             tracing::info!("Writing output to file: {path}");
-            std::fs::write(&path, strip_ansi(&file_output))
+            std::fs::write(&path, strip_ansi_escapes::strip_str(&file_output))
                 .with_context(|| format!("could not write {path}"))?;
         }
         Ok(())
@@ -464,24 +464,6 @@ fn title_case(name: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Removes ANSI escapes so files never carry terminal colors.
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            for c in chars.by_ref() {
-                if c == 'm' {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -545,10 +527,5 @@ mod tests {
     fn strategy_names_are_titled() {
         assert_eq!(title_case("simple"), "Simple");
         assert_eq!(title_case("simple_limit"), "Simple Limit");
-    }
-
-    #[test]
-    fn ansi_escapes_are_stripped_for_files() {
-        assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m text"), "red text");
     }
 }

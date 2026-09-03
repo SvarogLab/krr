@@ -7,7 +7,7 @@ use owo_colors::OwoColorize;
 use crate::model::{ResourceType, Selector};
 use crate::result::{ResourceScan, ScanResult};
 
-use super::{paint, request_cell, rows, total_diff_cell};
+use super::{paint, request_cell, rows, total_diff_cell, total_lines};
 
 pub fn render(result: &ScanResult) -> Result<String> {
     let config = result.config();
@@ -77,6 +77,27 @@ pub fn render(result: &ScanResult) -> Result<String> {
         output.push_str(&format!("\n{description}\n\n"));
     }
     output.push_str(&table.to_string());
+
+    let (totals, lines) = total_lines(result, true);
+    output.push_str(&format!(
+        "\nTotals for {} {} (requests of all running pods):\n",
+        totals.workloads,
+        if totals.workloads == 1 {
+            "workload"
+        } else {
+            "workloads"
+        }
+    ));
+    for line in lines {
+        output.push_str(&format!(
+            "  {:<7}{} -> {}  ({})\n",
+            line.resource.name(),
+            line.current,
+            line.recommended,
+            line.diff
+        ));
+    }
+
     output.push_str(&format!(
         "\n{} points - {}\n",
         result.score,
@@ -117,20 +138,7 @@ mod tests {
 
     /// Strips ANSI escapes so assertions can look at the text only.
     fn plain(text: &str) -> String {
-        let mut out = String::new();
-        let mut chars = text.chars();
-        while let Some(c) = chars.next() {
-            if c == '\u{1b}' {
-                for c in chars.by_ref() {
-                    if c == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
+        strip_ansi_escapes::strip_str(text)
     }
 
     #[test]
@@ -146,6 +154,18 @@ mod tests {
             "description is shown above the table"
         );
         assert!(output.contains("100 points - A"), "{output}");
+    }
+
+    #[test]
+    fn sums_the_requests_under_the_table() {
+        let output = plain(&render(&fixture()).unwrap());
+
+        assert!(output.contains("Totals for 1 workload ("), "{output}");
+        assert!(output.contains("CPU    100m -> 13m  (-87m)"), "{output}");
+        assert!(
+            output.contains("Memory 4096Mi -> 1.0  (-4096Mi)"),
+            "{output}"
+        );
     }
 
     #[test]

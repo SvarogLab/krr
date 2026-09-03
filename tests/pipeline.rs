@@ -9,7 +9,7 @@ use krr::model::{
 };
 use krr::prometheus::MetricsData;
 use krr::prometheus::metrics::Metric;
-use krr::result::{ResourceScan, ScanResult, StrategyData};
+use krr::result::{ResourceScan, ScanResult, StrategyData, Totals};
 use krr::runner::round_value;
 use krr::severity::Severity;
 use krr::strategy::{self, StrategyArgs};
@@ -226,6 +226,40 @@ fn every_formatter_renders_the_report() {
 
     let cpu_requests = headers.iter().position(|h| h == "CPU Requests").unwrap();
     assert_eq!(rows[0][cpu_requests], "(-935m) 1.0 -> 65m");
+}
+
+#[test]
+fn totals_add_up_the_whole_scan() {
+    let mib = 1024.0 * 1024.0;
+    let result = report(
+        &Config::default(),
+        vec![
+            // asks for 1 cpu / 2Gi per pod, two pods running, needs 65m and 300MiB
+            (
+                object("web", allocations("1", "2Gi")),
+                metrics(&[0.065], &[300.0 * mib]),
+            ),
+            // asks for 200m / 512Mi per pod, two pods, needs 150m and 400MiB
+            (
+                object("api", allocations("200m", "512Mi")),
+                metrics(&[0.15], &[400.0 * mib]),
+            ),
+        ],
+    );
+
+    let totals = Totals::of(&result.scans);
+
+    assert_eq!(totals.workloads, 2);
+    assert_eq!(totals.current[ResourceType::Cpu], 2.4);
+    assert_eq!(totals.recommended[ResourceType::Cpu], 0.43);
+    assert_eq!(
+        totals.current[ResourceType::Memory],
+        (2048.0 * 2.0 + 512.0 * 2.0) * mib
+    );
+    assert_eq!(
+        totals.recommended[ResourceType::Memory],
+        (345.0 * 2.0 + 460.0 * 2.0) * mib
+    );
 }
 
 #[test]

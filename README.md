@@ -62,7 +62,8 @@ have the same shape as upstream's, so existing consumers keep working.
 5. Loads the usage history per metric, batching large pod lists and preferring the `kubelet`
    job when several jobs export the same series.
 6. Runs the strategy, rounds up to whole millicores / mebibytes, applies `--cpu-min` and
-   `--mem-min`, scores every workload and prints the report.
+   `--mem-min`, scores every workload, and prints the report with the totals of what the
+   whole scan asks for now and after the change.
 
 ## Architecture
 

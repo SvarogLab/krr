@@ -7,7 +7,15 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
+
+/// Everything but the unreserved characters of RFC 3986 is escaped in query values.
+const QUERY_VALUE: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 /// One time series with its labels.
 #[derive(Debug, Clone, PartialEq)]
@@ -181,7 +189,9 @@ impl PrometheusClient {
             Transport::KubeProxy { client, base_path } => {
                 let query = params
                     .iter()
-                    .map(|(key, value)| format!("{key}={}", urlencode(value)))
+                    .map(|(key, value)| {
+                        format!("{key}={}", utf8_percent_encode(value, QUERY_VALUE))
+                    })
                     .collect::<Vec<_>>()
                     .join("&");
                 let uri = if query.is_empty() {
@@ -194,20 +204,6 @@ impl PrometheusClient {
             }
         }
     }
-}
-
-/// Percent-encodes a query parameter value.
-fn urlencode(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char)
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }
 
 // ------------------------------- response parsing -------------------------------
@@ -355,6 +351,20 @@ mod tests {
             ]
         }
     }"#;
+
+    #[test]
+    fn query_values_keep_only_unreserved_characters() {
+        let query = r#"max(x{pod=~"a|b"}) by (pod)"#;
+        let encoded = utf8_percent_encode(query, QUERY_VALUE).to_string();
+        assert_eq!(
+            encoded,
+            "max%28x%7Bpod%3D~%22a%7Cb%22%7D%29%20by%20%28pod%29"
+        );
+        assert_eq!(
+            utf8_percent_encode("a-b_c.d~e", QUERY_VALUE).to_string(),
+            "a-b_c.d~e"
+        );
+    }
 
     #[test]
     fn parses_instant_values_as_a_single_point() {

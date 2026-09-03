@@ -90,6 +90,13 @@ used instead and the workload is flagged.
 Flags for the dropped features are absent rather than silently ignored, so a command line
 written for upstream fails loudly instead of quietly doing less.
 
+## Added on top of upstream
+
+- **Totals**: the table and HTML reports end with the summed requests of the whole scan, now
+  and after the change, weighted by running pods. It is the sum of the per-row diff columns,
+  so resources the strategy could not recommend for are left out of it. Upstream has no such
+  summary. The CSV and JSON reports are untouched, so machine consumers keep upstream's shape.
+
 ## Deviations in behaviour
 
 - **Prometheus client**: a thin client over `reqwest` replaces `prometrix`. Failed requests are

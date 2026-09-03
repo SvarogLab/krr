@@ -12,7 +12,7 @@ mod yaml;
 use anyhow::{Result, bail};
 
 use crate::model::{NONE_LITERAL, RecValue, ResourceType, Selector, format_recommendation_value};
-use crate::result::{ResourceScan, ScanResult, format_diff};
+use crate::result::{ResourceScan, ScanResult, Totals, format_diff};
 use crate::severity::Severity;
 
 /// A formatter turns a scan result into text.
@@ -150,6 +150,42 @@ pub fn total_diff_cell(scan: &ResourceScan, resource: ResourceType, colored: boo
     )
 }
 
+/// One line of the totals block: the resource, both sums and the change.
+pub struct TotalLine {
+    pub resource: ResourceType,
+    pub current: String,
+    pub recommended: String,
+    pub diff: String,
+}
+
+/// What the whole scan asks for now and after the change, one line per resource.
+pub fn total_lines(result: &ScanResult, colored: bool) -> (Totals, Vec<TotalLine>) {
+    let totals = Totals::of(&result.scans);
+
+    let lines = ResourceType::ALL
+        .iter()
+        .map(|&resource| {
+            let current = RecValue::Val(totals.current[resource]);
+            let recommended = RecValue::Val(totals.recommended[resource]);
+            TotalLine {
+                resource,
+                current: format_recommendation_value(current),
+                recommended: format_recommendation_value(recommended),
+                // the change is rounded with the sums, so it is rendered from the value itself
+                diff: format_diff(
+                    RecValue::Val(0.0),
+                    RecValue::Val(totals.diff(resource)),
+                    Selector::Requests,
+                    1.0,
+                    colored,
+                ),
+            }
+        })
+        .collect();
+
+    (totals, lines)
+}
+
 /// Colors text according to a severity, mirroring the rich colors upstream uses.
 pub fn paint(text: &str, severity: Severity, colored: bool) -> String {
     if !colored {
@@ -222,6 +258,24 @@ pub(crate) mod tests {
             total_diff_cell(scan, ResourceType::Memory, false),
             "-4096Mi"
         );
+    }
+
+    #[test]
+    fn totals_are_rendered_per_resource() {
+        let (totals, lines) = total_lines(&fixture(), false);
+
+        assert_eq!(totals.workloads, 1);
+        assert_eq!(lines.len(), 2);
+
+        // the fixture asks for 50m of cpu on two running pods and gets 6.5m recommended
+        assert_eq!(lines[0].resource, ResourceType::Cpu);
+        assert_eq!(lines[0].current, "100m");
+        assert_eq!(lines[0].recommended, "13m");
+        assert_eq!(lines[0].diff, "-87m");
+
+        assert_eq!(lines[1].resource, ResourceType::Memory);
+        assert_eq!(lines[1].current, "4096Mi");
+        assert_eq!(lines[1].diff, "-4096Mi");
     }
 
     #[test]

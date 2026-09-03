@@ -155,6 +155,71 @@ impl ScanResult {
     }
 }
 
+/// What the whole scan asks for today and what it would ask for after the change.
+///
+/// Requests are weighted by the number of running pods, so the totals are the sum of the
+/// per-row diffs. Resources the strategy could not recommend for (`?`) are left out, exactly
+/// like the diff column leaves them empty.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Totals {
+    pub current: ByResource<f64>,
+    pub recommended: ByResource<f64>,
+    /// Workloads that contributed at least one resource.
+    pub workloads: usize,
+}
+
+impl Totals {
+    pub fn of(scans: &[ResourceScan]) -> Totals {
+        let mut totals = Totals::default();
+
+        for scan in scans {
+            let pods = scan.object.current_pods_count() as f64;
+            let mut counted = false;
+
+            for resource in ResourceType::ALL {
+                let recommended = scan.recommended.requests[resource].value;
+                if recommended == RecValue::Unknown {
+                    continue;
+                }
+                let current = scan.object.allocations.requests[resource];
+                totals.current[resource] += current.number_or_zero() * pods;
+                totals.recommended[resource] += recommended.number_or_zero() * pods;
+                counted = true;
+            }
+
+            if counted {
+                totals.workloads += 1;
+            }
+        }
+
+        // a long sum of floats drifts; the values themselves are whole millicores and bytes
+        for resource in ResourceType::ALL {
+            totals.current[resource] = round(totals.current[resource], resource);
+            totals.recommended[resource] = round(totals.recommended[resource], resource);
+        }
+
+        totals
+    }
+
+    /// The change in requests, rounded like the sums it comes from.
+    pub fn diff(&self, resource: ResourceType) -> f64 {
+        round(
+            self.recommended[resource] - self.current[resource],
+            resource,
+        )
+    }
+}
+
+/// Drops the floating point noise a sum accumulates, at the resource's own precision.
+fn round(value: f64, resource: ResourceType) -> f64 {
+    match resource {
+        // the smallest unit is 1m
+        ResourceType::Cpu => (value * 1000.0).round() / 1000.0,
+        // memory is counted in whole bytes
+        ResourceType::Memory => value.round(),
+    }
+}
+
 /// Renders the change between the allocated and the recommended value, e.g. `-43m`.
 ///
 /// Returns an empty string for limits and for values the strategy could not determine,
@@ -353,6 +418,78 @@ mod tests {
             Some("Not enough data")
         );
         assert_eq!(scan.recommended.info[ResourceType::Memory], None);
+    }
+
+    /// A scan of one workload: current requests, recommended requests, running pods.
+    fn scan_with_requests(
+        current: (RecValue, RecValue),
+        recommended: (RecValue, RecValue),
+        pods: usize,
+    ) -> ResourceScan {
+        let mut object = object(allocations(current, (Unset, Unset)));
+        object.pods = (0..pods)
+            .map(|i| PodData {
+                name: format!("pod-{i}"),
+                deleted: false,
+            })
+            .collect();
+
+        ResourceScan::calculate(object, allocations(recommended, (Unset, Unset)))
+    }
+
+    #[test]
+    fn totals_weigh_requests_by_running_pods() {
+        let scans = vec![
+            scan_with_requests((Val(0.1), Val(100.0)), (Val(0.05), Val(200.0)), 3),
+            scan_with_requests((Val(1.0), Val(500.0)), (Val(2.0), Val(400.0)), 1),
+        ];
+
+        let totals = Totals::of(&scans);
+
+        assert_eq!(totals.workloads, 2);
+        // 0.1 * 3 + 1.0 drifts to 1.3000000000000003 without rounding
+        assert_eq!(totals.current[ResourceType::Cpu], 1.3);
+        assert_eq!(totals.recommended[ResourceType::Cpu], 2.15);
+        assert_eq!(totals.current[ResourceType::Memory], 100.0 * 3.0 + 500.0);
+        assert_eq!(
+            totals.recommended[ResourceType::Memory],
+            200.0 * 3.0 + 400.0
+        );
+    }
+
+    #[test]
+    fn totals_skip_resources_without_a_recommendation() {
+        let scans = vec![
+            scan_with_requests((Val(1.0), Val(100.0)), (Unknown, Val(200.0)), 1),
+            scan_with_requests((Val(1.0), Val(100.0)), (Unknown, Unknown), 1),
+        ];
+
+        let totals = Totals::of(&scans);
+
+        // the cpu of both scans and the memory of the second one carry no recommendation
+        assert_eq!(totals.current[ResourceType::Cpu], 0.0);
+        assert_eq!(totals.recommended[ResourceType::Cpu], 0.0);
+        assert_eq!(totals.current[ResourceType::Memory], 100.0);
+        assert_eq!(totals.recommended[ResourceType::Memory], 200.0);
+        assert_eq!(totals.workloads, 1, "the fully unknown scan does not count");
+    }
+
+    #[test]
+    fn totals_treat_a_missing_request_as_zero() {
+        let scans = vec![scan_with_requests(
+            (Unset, Unset),
+            (Val(0.5), Val(100.0)),
+            2,
+        )];
+        let totals = Totals::of(&scans);
+
+        assert_eq!(totals.current[ResourceType::Cpu], 0.0);
+        assert_eq!(totals.recommended[ResourceType::Cpu], 1.0);
+    }
+
+    #[test]
+    fn totals_of_nothing_are_zero() {
+        assert_eq!(Totals::of(&[]), Totals::default());
     }
 
     #[test]
