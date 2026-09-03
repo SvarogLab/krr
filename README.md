@@ -45,8 +45,8 @@ OOMKilled, plus `--oom-memory-buffer-percentage`.
 
 ### Output formats
 
-`table` (default), `json`, `yaml`, `csv`, `csv-raw`, `html`. The JSON and YAML reports have the
-same shape as upstream's, so existing consumers keep working.
+`table` (default), `json`, `yaml`, `csv`, `csv-raw`, `html`, `pprint`. The JSON and YAML reports
+have the same shape as upstream's, so existing consumers keep working.
 
 ## What it does
 
@@ -94,27 +94,19 @@ The port was written test-first. Where behaviour is observable, the tests pin it
   `tests/formatters/test_csv_formatter.py`;
 - percentiles interpolate exactly like `numpy.percentile`;
 - the Prometheus client and loader are tested against a mock server (`wiremock`), including
-  retries, pod batching, job de-duplication and pod discovery.
+  retries, pod batching, job de-duplication and pod discovery;
+- the Kubernetes layer is tested against a mock API server: every workload kind, the filters,
+  the HPA fallback, job pagination and grouping, custom resources and pod lookups.
 
 ## Differences from upstream
 
-Implemented differently:
+Everything the CLI does is ported, including all nine workload kinds and all four metric
+stores. Left out on purpose: delivering the report to Slack, Azure Blob Storage, Teams or a
+Robusta runner; AWS-signed access to EKS/Amazon Managed Prometheus and Coralogix; the startup
+banner and update check; and the separate in-cluster enforcement component.
 
-- **Prometheus client**: a thin client over `reqwest` instead of `prometrix`. Requests retry
-  with exponential backoff rather than a random 2-10 s wait.
-- **HPA discovery** uses the `autoscaling/v2` API only; upstream falls back to `v1` on clusters
-  older than 1.23.
-- **HTML output** is a standalone document built directly, not a dump of the terminal table.
-- `ResourceAllocations.info` always serializes both resource keys (upstream emits `{}` when
-  empty). Everything else in the JSON report keeps upstream's shape.
-
-Not ported (the flags are absent rather than silently ignored):
-
-- authentication helpers for managed stores: AWS-signed EKS/AMP and Coralogix tokens
-  (`--openshift` is supported and reads the service account token);
-- publishing results to a Robusta runner, Slack, Azure Blob Storage or Teams;
-- `GroupedJob` workloads (`--job-grouping-labels`) and the batched Job discovery flags;
-- the `pprint` formatter (a Python `repr` dump) and the separate `enforcer` component.
+[`docs/PORTING.md`](docs/PORTING.md) records the upstream commit this port is based on, the
+module map, the full list of what was dropped and why, and the behavioural deviations.
 
 ## License
 

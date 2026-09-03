@@ -95,6 +95,16 @@ pub struct Config {
     pub prometheus_label: Option<String>,
     pub openshift: bool,
 
+    // Discovery settings
+    /// Page size for listing jobs, which can be numerous in a cluster.
+    pub discovery_job_batch_size: u32,
+    /// Upper bound on job pages, so a bad continue token cannot loop forever.
+    pub discovery_job_max_batches: u32,
+    /// Labels whose values group jobs into a single `GroupedJob` workload.
+    pub job_grouping_labels: Option<Vec<String>>,
+    /// Upper bound on jobs and pods queried per group.
+    pub job_grouping_limit: usize,
+
     // Concurrency
     pub max_workers: usize,
 
@@ -135,6 +145,10 @@ impl Default for Config {
             prometheus_cluster_label: None,
             prometheus_label: None,
             openshift: false,
+            discovery_job_batch_size: 5000,
+            discovery_job_max_batches: 100,
+            job_grouping_labels: None,
+            job_grouping_limit: 500,
             max_workers: 10,
             format: "table".to_string(),
             show_cluster_name: false,
@@ -214,6 +228,16 @@ pub fn parse_resources(values: &[String]) -> Result<Filter<Kind>> {
     Ok(Filter::Only(kinds))
 }
 
+/// Splits `--job-grouping-labels app,team` into a list of label names.
+pub fn parse_grouping_labels(value: Option<&str>) -> Option<Vec<String>> {
+    let labels: Vec<String> = value?
+        .split(',')
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty())
+        .collect();
+    (!labels.is_empty()).then_some(labels)
+}
+
 /// Parses `-H "X-Header: value"` arguments into a header map with lowercased names.
 pub fn parse_headers(values: &[String]) -> Result<BTreeMap<String, String>> {
     values
@@ -275,6 +299,16 @@ mod tests {
         assert_eq!(headers["x-foo"], "bar");
         assert_eq!(headers["x-baz"], "qux");
         assert!(parse_headers(&strings(&["nocolon"])).is_err());
+    }
+
+    #[test]
+    fn grouping_labels_are_split_on_commas() {
+        assert_eq!(parse_grouping_labels(None), None);
+        assert_eq!(parse_grouping_labels(Some("")), None);
+        assert_eq!(
+            parse_grouping_labels(Some("app, team ")),
+            Some(strings(&["app", "team"]))
+        );
     }
 
     #[test]

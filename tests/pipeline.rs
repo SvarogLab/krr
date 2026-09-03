@@ -46,6 +46,7 @@ fn object(name: &str, allocations: ResourceAllocations) -> K8sObject {
         annotations: None,
         pod_selector: None,
         uid: None,
+        grouped_jobs: Vec::new(),
     }
 }
 

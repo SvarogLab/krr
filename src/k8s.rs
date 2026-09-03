@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, StatefulSet};
+use k8s_openapi::api::autoscaling::v1::HorizontalPodAutoscaler as HorizontalPodAutoscalerV1;
 use k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscaler;
 use k8s_openapi::api::batch::v1::{CronJob, Job};
 use k8s_openapi::api::core::v1::{Container, Namespace, Pod};
@@ -100,20 +101,42 @@ impl ClusterLoader {
             })
             .await,
         );
-        objects.extend(
-            self.collect::<Job>(Kind::Job, &namespaces, &hpas, |item| {
-                // jobs of a cronjob are covered by their cronjob
-                if owned_by_cron_job(&item.metadata) {
-                    return None;
-                }
-                let spec = item.spec.as_ref()?;
-                Some((
-                    containers(spec.template.spec.as_ref()),
-                    spec.selector.clone(),
-                ))
-            })
-            .await,
-        );
+        // jobs feed both the Job and the GroupedJob workloads, so they are listed once
+        let grouping_labels = self.config.job_grouping_labels.clone().unwrap_or_default();
+        let wants_jobs = self.config.resources.matches(&Kind::Job);
+        let wants_groups =
+            !grouping_labels.is_empty() && self.config.resources.matches(&Kind::GroupedJob);
+
+        if wants_jobs || wants_groups {
+            let jobs = self.list_jobs(&namespaces).await;
+
+            if wants_jobs {
+                objects.extend(
+                    jobs.iter()
+                        .filter(|job| !is_job_grouped(job, &grouping_labels))
+                        .flat_map(|job| {
+                            // jobs of a cronjob are covered by their cronjob
+                            if owned_by_cron_job(&job.metadata) {
+                                return Vec::new();
+                            }
+                            let Some(spec) = job.spec.as_ref() else {
+                                return Vec::new();
+                            };
+                            self.build(
+                                &job.metadata,
+                                &containers(spec.template.spec.as_ref()),
+                                spec.selector.as_ref(),
+                                Kind::Job,
+                                &hpas,
+                            )
+                        }),
+                );
+            }
+
+            if wants_groups {
+                objects.extend(self.grouped_job_objects(&jobs, &grouping_labels, &hpas));
+            }
+        }
         objects.extend(
             self.collect::<CronJob>(Kind::CronJob, &namespaces, &hpas, |item| {
                 let spec = item.spec.job_template.spec.as_ref()?;
@@ -139,6 +162,86 @@ impl ClusterLoader {
         Ok(objects)
     }
 
+    /// Lists jobs page by page: a cluster can hold far more of them than of anything else.
+    async fn list_jobs(&self, namespaces: &Filter<String>) -> Vec<Job> {
+        let targets: Vec<Option<&str>> = match namespaces {
+            Filter::All => vec![None],
+            Filter::Only(namespaces) => namespaces.iter().map(|ns| Some(ns.as_str())).collect(),
+        };
+
+        let mut jobs = Vec::new();
+        let mut pages = 0;
+
+        for namespace in targets {
+            let api: Api<Job> = match namespace {
+                None => Api::all(self.client.clone()),
+                Some(namespace) => Api::namespaced(self.client.clone(), namespace),
+            };
+
+            let mut token: Option<String> = None;
+            while pages < self.config.discovery_job_max_batches {
+                let mut params = self
+                    .list_params()
+                    .limit(self.config.discovery_job_batch_size);
+                if let Some(token) = &token {
+                    params = params.continue_token(token);
+                }
+
+                let page = match api.list(&params).await {
+                    Ok(page) => page,
+                    Err(error) => {
+                        // an expired continue token cannot be resumed, so keep what we have
+                        tracing::error!(
+                            "could not list Jobs: {error:#}. Continuing with what was read."
+                        );
+                        break;
+                    }
+                };
+
+                pages += 1;
+                jobs.extend(page.items);
+
+                token = page.metadata.continue_.filter(|token| !token.is_empty());
+                if token.is_none() {
+                    break;
+                }
+            }
+        }
+
+        tracing::debug!("found {} jobs in {pages} page(s)", jobs.len());
+        jobs
+    }
+
+    /// Turns groups of jobs into one scannable workload each.
+    fn grouped_job_objects(
+        &self,
+        jobs: &[Job],
+        labels: &[String],
+        hpas: &HpaIndex,
+    ) -> Vec<K8sObject> {
+        group_jobs(jobs, labels, self.config.job_grouping_limit)
+            .into_iter()
+            .flat_map(|group| {
+                let mut objects = scannable_objects(
+                    &group.template,
+                    &group.containers,
+                    Kind::GroupedJob,
+                    self.cluster.as_deref(),
+                    hpas,
+                );
+                for object in &mut objects {
+                    // the group, not the template job, is what gets reported
+                    object.name = group.key.clone();
+                    object.namespace = group.namespace.clone();
+                    object.pod_selector = Some(group.key.clone());
+                    object.grouped_jobs = group.jobs.clone();
+                    object.uid = None;
+                }
+                objects
+            })
+            .collect()
+    }
+
     /// Pods currently backing a workload, used when Prometheus knows none.
     pub async fn list_pods(&self, object: &K8sObject) -> Result<Vec<PodData>> {
         let selector = match object.kind {
@@ -154,11 +257,16 @@ impl ClusterLoader {
 
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &object.namespace);
         let params = ListParams::default().labels(&selector);
+        let limit = match object.kind {
+            Kind::GroupedJob => self.config.job_grouping_limit,
+            _ => usize::MAX,
+        };
         Ok(pods
             .list(&params)
             .await?
             .items
             .into_iter()
+            .take(limit)
             .filter_map(|pod| pod.metadata.name)
             .map(|name| PodData {
                 name,
@@ -201,17 +309,25 @@ impl ClusterLoader {
 
     /// HPAs of the cluster, indexed by the workload they scale.
     pub async fn list_hpas(&self, namespaces: &Filter<String>) -> HpaIndex {
-        match self.list::<HorizontalPodAutoscaler>(namespaces).await {
-            Ok(hpas) => hpas.iter().filter_map(hpa_entry).collect(),
-            Err(error) => {
-                tracing::warn!(
-                    "could not list HPAs in {}: {error:#}. Assuming there are none, \
-                     which may lead to inaccurate results for autoscaled workloads.",
-                    self.cluster.as_deref().unwrap_or("the cluster")
-                );
-                HpaIndex::new()
+        let error = match self.list::<HorizontalPodAutoscaler>(namespaces).await {
+            Ok(hpas) => return hpas.iter().filter_map(hpa_entry).collect(),
+            // clusters older than 1.23 only serve autoscaling/v1
+            Err(error) if is_not_found(&error) => {
+                tracing::debug!("autoscaling/v2 is not available, falling back to v1");
+                match self.list::<HorizontalPodAutoscalerV1>(namespaces).await {
+                    Ok(hpas) => return hpas.iter().filter_map(hpa_entry_v1).collect(),
+                    Err(error) => error,
+                }
             }
-        }
+            Err(error) => error,
+        };
+
+        tracing::warn!(
+            "could not list HPAs in {}: {error:#}. Assuming there are none, \
+             which may lead to inaccurate results for autoscaled workloads.",
+            self.cluster.as_deref().unwrap_or("the cluster")
+        );
+        HpaIndex::new()
     }
 
     /// Namespaces to scan, expanding regular expressions in `--namespace`.
@@ -520,6 +636,7 @@ pub fn scannable_objects(
                 .map(|values| values.into_iter().collect()),
             pod_selector: None,
             uid: meta.uid.clone(),
+            grouped_jobs: Vec::new(),
         })
         .collect()
 }
@@ -603,6 +720,110 @@ pub fn hpa_entry(hpa: &HorizontalPodAutoscaler) -> Option<(HpaKey, HpaData)> {
         target_memory_utilization_percentage: target("memory"),
     };
     Some((key, data))
+}
+
+/// Jobs sharing a label value inside one namespace, scanned as a single workload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobGroup {
+    /// `label=value`, used both as the workload name and as the pod selector.
+    pub key: String,
+    pub namespace: String,
+    /// Names of the jobs in the group, capped at the configured limit.
+    pub jobs: Vec<String>,
+    /// Metadata and containers of the first job seen, used as the template.
+    pub template: ObjectMeta,
+    pub containers: Vec<Container>,
+}
+
+/// Whether a job carries any of the grouping labels.
+pub fn is_job_grouped(job: &Job, labels: &[String]) -> bool {
+    let job_labels = job.metadata.labels.as_ref();
+    labels
+        .iter()
+        .any(|label| job_labels.is_some_and(|labels| labels.contains_key(label)))
+}
+
+/// Groups jobs by the value of each grouping label, per namespace.
+///
+/// Jobs owned by a CronJob are left out: they are covered by their CronJob.
+pub fn group_jobs(jobs: &[Job], labels: &[String], limit: usize) -> Vec<JobGroup> {
+    // (key, namespace) -> jobs, keeping the order in which groups were seen
+    let mut groups: Vec<((String, String), Vec<&Job>)> = Vec::new();
+
+    for job in jobs {
+        if owned_by_cron_job(&job.metadata) || !is_job_grouped(job, labels) {
+            continue;
+        }
+        let (Some(name), Some(namespace)) = (&job.metadata.name, &job.metadata.namespace) else {
+            continue;
+        };
+        let _ = name;
+
+        for label in labels {
+            let Some(value) = job.metadata.labels.as_ref().and_then(|l| l.get(label)) else {
+                continue;
+            };
+            let key = (format!("{label}={value}"), namespace.clone());
+            match groups.iter_mut().find(|(existing, _)| *existing == key) {
+                Some((_, members)) => members.push(job),
+                None => groups.push((key, vec![job])),
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .filter_map(|((key, namespace), members)| {
+            let template = members.first()?;
+            Some(JobGroup {
+                key,
+                namespace,
+                jobs: members
+                    .iter()
+                    .take(limit)
+                    .filter_map(|job| job.metadata.name.clone())
+                    .collect(),
+                template: template.metadata.clone(),
+                containers: containers(
+                    template
+                        .spec
+                        .as_ref()
+                        .and_then(|spec| spec.template.spec.as_ref()),
+                ),
+            })
+        })
+        .collect()
+}
+
+/// Indexes an `autoscaling/v1` HPA, which only knows about CPU.
+pub fn hpa_entry_v1(hpa: &HorizontalPodAutoscalerV1) -> Option<(HpaKey, HpaData)> {
+    let spec = &hpa.spec;
+    let status = hpa.status.as_ref();
+
+    let key = (
+        hpa.metadata.namespace.clone()?,
+        spec.scale_target_ref.kind.clone(),
+        spec.scale_target_ref.name.clone(),
+    );
+    let data = HpaData {
+        min_replicas: spec.min_replicas,
+        max_replicas: spec.max_replicas,
+        current_replicas: status.map(|status| status.current_replicas),
+        desired_replicas: status
+            .map(|status| status.desired_replicas)
+            .unwrap_or_default(),
+        target_cpu_utilization_percentage: spec.target_cpu_utilization_percentage.map(f64::from),
+        target_memory_utilization_percentage: None,
+    };
+    Some((key, data))
+}
+
+/// Whether an API call failed because the resource type does not exist.
+fn is_not_found(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<kube::Error>(),
+        Some(kube::Error::Api(response)) if response.code == 404
+    )
 }
 
 /// Containers and pod selector of a custom resource, read from its JSON.
@@ -813,6 +1034,160 @@ mod tests {
         assert_eq!(data.max_replicas, 10);
         assert_eq!(data.current_replicas, Some(2));
         assert_eq!(data.desired_replicas, 3);
+    }
+
+    fn job(name: &str, namespace: &str, labels: &[(&str, &str)], owner: Option<&str>) -> Job {
+        use k8s_openapi::api::batch::v1::JobSpec;
+        use k8s_openapi::api::core::v1::{PodSpec, PodTemplateSpec};
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+
+        Job {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                labels: (!labels.is_empty()).then(|| {
+                    labels
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                }),
+                owner_references: owner.map(|kind| {
+                    vec![OwnerReference {
+                        kind: kind.to_string(),
+                        name: "owner".into(),
+                        uid: "owner-uid".into(),
+                        api_version: "batch/v1".into(),
+                        ..Default::default()
+                    }]
+                }),
+                ..Default::default()
+            },
+            spec: Some(JobSpec {
+                template: PodTemplateSpec {
+                    metadata: None,
+                    spec: Some(PodSpec {
+                        containers: vec![container("app", &[("cpu", "50m")], &[])],
+                        ..Default::default()
+                    }),
+                },
+                ..Default::default()
+            }),
+            status: None,
+        }
+    }
+
+    #[test]
+    fn jobs_are_grouped_per_label_value_and_namespace() {
+        let labels = vec!["app".to_string()];
+        let jobs = [
+            job("batch-1", "default", &[("app", "etl")], None),
+            job("batch-2", "default", &[("app", "etl")], None),
+            job("batch-3", "prod", &[("app", "etl")], None),
+            job("other", "default", &[("app", "reports")], None),
+        ];
+
+        let groups = group_jobs(&jobs, &labels, 500);
+
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].key, "app=etl");
+        assert_eq!(groups[0].namespace, "default");
+        assert_eq!(groups[0].jobs, vec!["batch-1", "batch-2"]);
+        assert_eq!(groups[0].containers[0].name, "app");
+        assert_eq!(groups[1].namespace, "prod");
+        assert_eq!(groups[2].key, "app=reports");
+    }
+
+    #[test]
+    fn grouping_skips_ungrouped_and_cronjob_owned_jobs() {
+        let labels = vec!["app".to_string()];
+        let jobs = [
+            job("plain", "default", &[], None),
+            job("from-cron", "default", &[("app", "etl")], Some("CronJob")),
+            job("kept", "default", &[("app", "etl")], None),
+        ];
+
+        let groups = group_jobs(&jobs, &labels, 500);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].jobs, vec!["kept"]);
+
+        assert!(!is_job_grouped(&jobs[0], &labels));
+        assert!(is_job_grouped(&jobs[2], &labels));
+    }
+
+    #[test]
+    fn a_job_matching_several_labels_lands_in_each_group() {
+        let labels = vec!["app".to_string(), "team".to_string()];
+        let jobs = [job(
+            "batch",
+            "default",
+            &[("app", "etl"), ("team", "data")],
+            None,
+        )];
+
+        let groups = group_jobs(&jobs, &labels, 500);
+        let keys: Vec<&str> = groups.iter().map(|group| group.key.as_str()).collect();
+        assert_eq!(keys, vec!["app=etl", "team=data"]);
+    }
+
+    #[test]
+    fn groups_are_capped_at_the_limit() {
+        let labels = vec!["app".to_string()];
+        let jobs: Vec<Job> = (0..5)
+            .map(|i| job(&format!("batch-{i}"), "default", &[("app", "etl")], None))
+            .collect();
+
+        let groups = group_jobs(&jobs, &labels, 2);
+        assert_eq!(groups[0].jobs, vec!["batch-0", "batch-1"]);
+    }
+
+    #[test]
+    fn autoscaling_v1_hpas_only_carry_a_cpu_target() {
+        use k8s_openapi::api::autoscaling::v1;
+
+        let hpa = HorizontalPodAutoscalerV1 {
+            metadata: meta("hpa", "default"),
+            spec: v1::HorizontalPodAutoscalerSpec {
+                max_replicas: 10,
+                min_replicas: Some(1),
+                scale_target_ref: v1::CrossVersionObjectReference {
+                    kind: "Deployment".into(),
+                    name: "web".into(),
+                    api_version: None,
+                },
+                target_cpu_utilization_percentage: Some(80),
+            },
+            status: Some(v1::HorizontalPodAutoscalerStatus {
+                current_replicas: 2,
+                desired_replicas: 3,
+                ..Default::default()
+            }),
+        };
+
+        let (key, data) = hpa_entry_v1(&hpa).unwrap();
+        assert_eq!(
+            key,
+            (
+                "default".to_string(),
+                "Deployment".to_string(),
+                "web".to_string()
+            )
+        );
+        assert_eq!(data.target_cpu_utilization_percentage, Some(80.0));
+        assert_eq!(data.target_memory_utilization_percentage, None);
+        assert_eq!(data.current_replicas, Some(2));
+        assert_eq!(data.desired_replicas, 3);
+    }
+
+    #[test]
+    fn missing_api_groups_are_recognized() {
+        let missing = anyhow::Error::from(kube::Error::Api(Box::new(kube::core::Status {
+            code: 404,
+            message: "not found".into(),
+            reason: "NotFound".into(),
+            ..Default::default()
+        })));
+        assert!(is_not_found(&missing));
+        assert!(!is_not_found(&anyhow::anyhow!("something else")));
     }
 
     #[test]

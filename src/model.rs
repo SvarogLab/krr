@@ -256,10 +256,12 @@ pub enum Kind {
     Rollout,
     DeploymentConfig,
     StrimziPodSet,
+    /// Jobs sharing a label value, scanned as one workload.
+    GroupedJob,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 8] = [
+    pub const ALL: [Kind; 9] = [
         Kind::Deployment,
         Kind::DaemonSet,
         Kind::StatefulSet,
@@ -268,6 +270,7 @@ impl Kind {
         Kind::Rollout,
         Kind::DeploymentConfig,
         Kind::StrimziPodSet,
+        Kind::GroupedJob,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -280,6 +283,7 @@ impl Kind {
             Kind::Rollout => "Rollout",
             Kind::DeploymentConfig => "DeploymentConfig",
             Kind::StrimziPodSet => "StrimziPodSet",
+            Kind::GroupedJob => "GroupedJob",
         }
     }
 
@@ -331,6 +335,9 @@ pub struct K8sObject {
     /// UID of the owning API resource (used to find the jobs of a CronJob); not serialized.
     #[serde(skip)]
     pub uid: Option<String>,
+    /// Names of the jobs a `GroupedJob` stands for; not serialized.
+    #[serde(skip)]
+    pub grouped_jobs: Vec<String>,
 }
 
 impl K8sObject {
@@ -391,6 +398,7 @@ mod tests {
             annotations: None,
             pod_selector: None,
             uid: None,
+            grouped_jobs: Vec::new(),
         }
     }
 
@@ -488,6 +496,7 @@ mod tests {
     fn kind_parsing_is_case_insensitive() {
         assert_eq!(Kind::parse("deployment"), Some(Kind::Deployment));
         assert_eq!(Kind::parse("DAEMONSET"), Some(Kind::DaemonSet));
+        assert_eq!(Kind::parse("groupedjob"), Some(Kind::GroupedJob));
         assert_eq!(Kind::parse("nope"), None);
         assert_eq!(Kind::Deployment.to_string(), "Deployment");
     }

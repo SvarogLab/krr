@@ -5,6 +5,7 @@
 mod csv;
 mod html;
 mod json;
+mod pprint;
 mod table;
 mod yaml;
 
@@ -46,6 +47,11 @@ pub const ALL: &[Formatter] = &[
     Formatter {
         name: "csv-raw",
         render: csv::render_raw,
+        colored: false,
+    },
+    Formatter {
+        name: "pprint",
+        render: pprint::render,
         colored: false,
     },
     Formatter {

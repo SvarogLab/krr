@@ -164,6 +164,7 @@ mod tests {
             annotations: None,
             pod_selector: None,
             uid: None,
+            grouped_jobs: Vec::new(),
         }
     }
 

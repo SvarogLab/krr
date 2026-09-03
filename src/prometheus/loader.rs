@@ -147,6 +147,10 @@ impl MetricsLoader {
                     .await?,
                 "Job",
             ),
+            // a group stands for the jobs it collected
+            Kind::GroupedJob if !object.grouped_jobs.is_empty() => {
+                (object.grouped_jobs.clone(), "Job")
+            }
             _ => (vec![object.name.clone()], object.kind.as_str()),
         };
 
@@ -355,6 +359,7 @@ mod tests {
             annotations: None,
             pod_selector: None,
             uid: None,
+            grouped_jobs: Vec::new(),
         }
     }
 
@@ -565,6 +570,46 @@ mod tests {
             "{queries:?}"
         );
         assert!(queries[0].contains(r#"owner_name=~"web""#), "{queries:?}");
+    }
+
+    #[tokio::test]
+    async fn grouped_jobs_are_queried_by_their_job_names() {
+        let server = MockServer::start().await;
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let recorder = seen.clone();
+
+        Mock::given(method("GET"))
+            .respond_with(move |request: &Request| {
+                let query = request
+                    .url
+                    .query_pairs()
+                    .find(|(k, _)| k == "query")
+                    .unwrap()
+                    .1
+                    .to_string();
+                recorder.lock().unwrap().push(query);
+                ResponseTemplate::new(200).set_body_string(
+                    r#"{"status":"success","data":{"resultType":"vector","result":[]}}"#,
+                )
+            })
+            .mount(&server)
+            .await;
+
+        let mut group = object(Kind::GroupedJob, &[]);
+        group.name = "app=etl".into();
+        group.grouped_jobs = vec!["batch-1".into(), "batch-2".into()];
+
+        loader(&server)
+            .load_pods(&group, Duration::from_secs(3600))
+            .await
+            .unwrap();
+
+        let queries = seen.lock().unwrap().clone();
+        assert!(queries[0].contains(r#"owner_kind="Job""#), "{queries:?}");
+        assert!(
+            queries[0].contains(r#"owner_name=~"batch-1|batch-2""#),
+            "{queries:?}"
+        );
     }
 
     #[test]

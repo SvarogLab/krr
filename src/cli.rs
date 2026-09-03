@@ -146,6 +146,23 @@ pub struct RunArgs {
     )]
     pub memory_min_value: u32,
 
+    // ----------------------------- Discovery -----------------------------
+    /// Page size for listing jobs.
+    #[arg(long, default_value_t = 5000, help_heading = "Job Discovery Settings")]
+    pub discovery_job_batch_size: u32,
+
+    /// Maximum number of job pages to read.
+    #[arg(long, default_value_t = 100, help_heading = "Job Discovery Settings")]
+    pub discovery_job_max_batches: u32,
+
+    /// Label name(s) grouping jobs into one GroupedJob workload, comma separated.
+    #[arg(long, help_heading = "Job Grouping Settings")]
+    pub job_grouping_labels: Option<String>,
+
+    /// Maximum number of jobs and pods queried per group.
+    #[arg(long, default_value_t = 500, help_heading = "Job Grouping Settings")]
+    pub job_grouping_limit: usize,
+
     /// Workloads scanned at the same time.
     #[arg(
         short = 'w',
@@ -320,6 +337,10 @@ impl RunArgs {
             prometheus_cluster_label: self.prometheus_cluster_label,
             prometheus_label: self.prometheus_label,
             openshift: self.openshift,
+            discovery_job_batch_size: self.discovery_job_batch_size.max(1),
+            discovery_job_max_batches: self.discovery_job_max_batches.max(1),
+            job_grouping_labels: config::parse_grouping_labels(self.job_grouping_labels.as_deref()),
+            job_grouping_limit: self.job_grouping_limit.max(1),
             max_workers: self.max_workers.max(1),
             format: self.format,
             show_cluster_name: self.show_cluster_name,
@@ -459,6 +480,33 @@ mod tests {
 
         assert!(parse(&["krr", "simple", "-p", "prom:9090"]).is_err());
         assert!(parse(&["krr", "simple", "-H", "nocolon"]).is_err());
+    }
+
+    #[test]
+    fn job_discovery_and_grouping_are_configurable() {
+        let (config, _) = parse(&["krr", "simple"]).unwrap();
+        assert_eq!(config.discovery_job_batch_size, 5000);
+        assert_eq!(config.discovery_job_max_batches, 100);
+        assert_eq!(config.job_grouping_labels, None);
+        assert_eq!(config.job_grouping_limit, 500);
+
+        let (config, _) = parse(&[
+            "krr",
+            "simple",
+            "--job-grouping-labels",
+            "app,team",
+            "--job-grouping-limit",
+            "50",
+            "--discovery-job-batch-size",
+            "1000",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.job_grouping_labels,
+            Some(vec!["app".into(), "team".into()])
+        );
+        assert_eq!(config.job_grouping_limit, 50);
+        assert_eq!(config.discovery_job_batch_size, 1000);
     }
 
     #[test]
