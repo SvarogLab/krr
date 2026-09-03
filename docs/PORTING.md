@@ -110,6 +110,12 @@ written for upstream fails loudly instead of quietly doing less.
   accepted here for compatibility.
 - **Report order**: rows are sorted by cluster, namespace, workload and container; upstream
   prints them in discovery order, grouped by kind.
+- **Range queries keep their step inside Prometheus's point budget**: with the default two
+  weeks of history at a 1.25 minute step a range query asks for 16k points, and every
+  Prometheus refuses more than 11k, so the step is widened and a warning explains it. It only
+  affects `simple_limit`, the one strategy that reads a raw series instead of letting
+  Prometheus reduce it. Upstream applies the same workaround only behind `--eks-managed-prom`,
+  so its `simple_limit` fails against a default Prometheus.
 - **Retries** stop at a 4xx: a query the store rejected fails the same way however often it is
   sent. Upstream retries every failure five times.
 - **`--prometheus-cluster-label` requires `--prometheus-label`**, which names the label to

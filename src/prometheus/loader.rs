@@ -11,7 +11,7 @@ use futures::future::join_all;
 use crate::model::{K8sObject, Kind, PodData};
 
 use super::client::{PrometheusClient, Series, filter_duplicate_jobs};
-use super::metrics::{Metric, QueryType, duration_literal, step_literal};
+use super::metrics::{Metric, QueryType, duration_literal, range_step, step_literal};
 use super::{MetricsData, PodSeries};
 
 /// Maximum number of pods per query; longer pod lists are split.
@@ -95,6 +95,12 @@ impl MetricsLoader {
             }
             return Ok(combined);
         }
+
+        // a range query has a point budget; the rate window follows the same step
+        let step = match metric.query_type() {
+            QueryType::Range => widen_step_for_range(period, step),
+            QueryType::Instant => step,
+        };
 
         let step_str = step_literal(step);
         let query = metric.query(
@@ -285,6 +291,25 @@ impl MetricsLoader {
             .context("result carries no value")?;
         Ok(value.1)
     }
+}
+
+/// Widens the step of a range query, warning once about the lost resolution.
+fn widen_step_for_range(period: Duration, step: Duration) -> Duration {
+    let widened = range_step(period, step);
+    if widened != step {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "The history and step ask for more points than Prometheus returns in one query, \
+                 so the step of the range queries was widened from {}s to {}s. \
+                 Pass a larger --timeframe-duration or a shorter --history-duration \
+                 to choose the resolution yourself.",
+                step.as_secs(),
+                widened.as_secs()
+            );
+        });
+    }
+    widened
 }
 
 /// Seconds since the epoch, truncated to a whole minute like upstream does.

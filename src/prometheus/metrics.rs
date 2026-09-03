@@ -120,6 +120,23 @@ pub fn pods_selector(object: &K8sObject) -> String {
         .join("|")
 }
 
+/// Prometheus refuses a range query that would return more points than this per series.
+pub const MAX_RANGE_POINTS: u64 = 11_000;
+
+/// Widens the step until a range query fits in the point budget.
+///
+/// The default history of two weeks at a 1.25 minute step asks for 16k points, which every
+/// Prometheus rejects with "exceeded maximum resolution".
+pub fn range_step(period: Duration, step: Duration) -> Duration {
+    let points = period.as_secs_f64() / step.as_secs_f64();
+    if points <= MAX_RANGE_POINTS as f64 {
+        return step;
+    }
+
+    let seconds = (period.as_secs_f64() / MAX_RANGE_POINTS as f64).ceil();
+    Duration::from_secs_f64(seconds)
+}
+
 /// Formats a step for PromQL: whole seconds.
 pub fn step_literal(step: Duration) -> String {
     format!("{}s", step.as_secs_f64().round() as u64)
@@ -202,6 +219,24 @@ mod tests {
         assert_eq!(duration_literal(Duration::from_secs(3600)), "60m");
         assert_eq!(duration_literal(Duration::from_secs(24 * 3600)), "1440m");
         assert_eq!(duration_literal(Duration::from_secs(14 * 24 * 3600)), "14d");
+    }
+
+    #[test]
+    fn range_steps_stay_inside_the_point_budget() {
+        let fortnight = Duration::from_secs(14 * 24 * 3600);
+
+        // the defaults ask for 16128 points, which prometheus rejects
+        let step = range_step(fortnight, Duration::from_secs(75));
+        assert_eq!(step, Duration::from_secs(110));
+        assert!(fortnight.as_secs() / step.as_secs() <= MAX_RANGE_POINTS);
+
+        // a step that already fits is left alone
+        let step = Duration::from_secs(300);
+        assert_eq!(range_step(fortnight, step), step);
+        assert_eq!(
+            range_step(Duration::from_secs(3600), Duration::from_secs(75)),
+            Duration::from_secs(75)
+        );
     }
 
     #[test]

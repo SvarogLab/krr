@@ -20,6 +20,23 @@ use crate::prometheus::loader::MetricsLoader;
 use crate::result::{ResourceScan, ScanResult, StrategyData};
 use crate::strategy::{Strategy, StrategyRecommendation};
 
+/// The progress bar of the running scan, so log lines can step around it.
+static ACTIVE_PROGRESS: std::sync::Mutex<Option<ProgressBar>> = std::sync::Mutex::new(None);
+
+/// Runs `write` with the progress bar cleared, so its line is never overwritten.
+pub fn around_progress<T>(write: impl FnOnce() -> T) -> T {
+    // the guard is dropped before suspending: writing may call back in on this thread
+    let bar = {
+        let guard = ACTIVE_PROGRESS.lock();
+        guard.ok().and_then(|bar| bar.clone())
+    };
+
+    match bar {
+        Some(bar) => bar.suspend(write),
+        None => write(),
+    }
+}
+
 /// Everything needed to scan one cluster.
 struct ClusterContext {
     workloads: ClusterLoader,
@@ -140,6 +157,9 @@ impl Runner {
         };
 
         let progress = self.progress_bar(workloads.len() as u64);
+        if let (Ok(mut active), Some(bar)) = (ACTIVE_PROGRESS.lock(), progress.as_deref()) {
+            *active = Some(bar.clone());
+        }
         let runner: &Runner = self;
         let scans: Vec<Option<ResourceScan>> = futures::stream::iter(workloads)
             .map(|(object, context)| {
@@ -157,6 +177,9 @@ impl Runner {
             .await;
         if let Some(progress) = &progress {
             progress.finish_and_clear();
+        }
+        if let Ok(mut active) = ACTIVE_PROGRESS.lock() {
+            *active = None;
         }
 
         let mut scans: Vec<ResourceScan> = scans.into_iter().flatten().collect();

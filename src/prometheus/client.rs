@@ -216,13 +216,15 @@ impl PrometheusClient {
                     .map_err(|error| Failure::permanent(error.into()))?;
 
                 client.request_text(request).await.map_err(|error| {
-                    let retryable = match &error {
-                        kube::Error::Api(response) => is_retryable(response.code),
-                        _ => true,
+                    // the proxied body is not a kubernetes Status, so kube cannot read it
+                    let kube::Error::Api(status) = &error else {
+                        return Failure::retryable(error.into());
                     };
+                    let detail = prometheus_error(&status.message)
+                        .unwrap_or_else(|| status.message.trim().to_string());
                     Failure {
-                        error: error.into(),
-                        retryable,
+                        error: anyhow::anyhow!("{} returned {}: {detail}", self.name, status.code),
+                        retryable: is_retryable(status.code),
                     }
                 })
             }
@@ -249,6 +251,16 @@ impl Failure {
             error,
             retryable: false,
         }
+    }
+}
+
+/// Reads the human part out of a Prometheus API error body.
+fn prometheus_error(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = value.get("error")?.as_str()?;
+    match value.get("errorType").and_then(|kind| kind.as_str()) {
+        Some(kind) => Some(format!("{kind}: {error}")),
+        None => Some(error.to_string()),
     }
 }
 
@@ -451,6 +463,17 @@ mod tests {
         let error = parse_series(body).unwrap_err().to_string();
         assert!(error.contains("parse error"), "{error}");
         assert!(error.contains("bad_data"), "{error}");
+    }
+
+    #[test]
+    fn prometheus_errors_are_unwrapped_from_the_body() {
+        let body =
+            r#"{"status":"error","errorType":"bad_data","error":"exceeded maximum resolution"}"#;
+        assert_eq!(
+            prometheus_error(body).unwrap(),
+            "bad_data: exceeded maximum resolution"
+        );
+        assert_eq!(prometheus_error("not json"), None);
     }
 
     #[test]
