@@ -112,4 +112,8 @@ module map, the full list of what was dropped and why, and the behavioural devia
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The upstream project is MIT licensed and its notice is kept.
+MIT, see [LICENSE](LICENSE). This is a port of [robusta-dev/krr](https://github.com/robusta-dev/krr),
+which is MIT licensed, so its copyright notice is kept alongside this one.
+
+Every dependency is permissive too: MIT, Apache-2.0, ISC, BSD, Zlib, Unicode-3.0 or CC0. There
+is no copyleft in the tree.
