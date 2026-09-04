@@ -112,4 +112,4 @@ module map, the full list of what was dropped and why, and the behavioural devia
 
 ## License
 
-The upstream project is MIT licensed; this port follows it.
+MIT, see [LICENSE](LICENSE). The upstream project is MIT licensed and its notice is kept.
