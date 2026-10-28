@@ -12,4 +12,4 @@ permissions:
 
 jobs:
   rust:
-    uses: SvarogLab/.github/.github/workflows/rust.yml@feat/shared-ci
+    uses: SvarogLab/.github/.github/workflows/rust.yml@v1
