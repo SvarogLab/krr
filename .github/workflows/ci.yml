@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    uses: SvarogLab/.github/.github/workflows/rust.yml@feat/shared-ci

@@ -100,6 +100,9 @@ The port was written test-first. Where behaviour is observable, the tests pin it
 - the Kubernetes layer is tested against a mock API server: every workload kind, the filters,
   the HPA fallback, job pagination and grouping, custom resources and pod lookups.
 
+CI runs the tests with clippy on every push and pull request, and daily on `main`, on Linux for
+amd64 and arm64.
+
 ## Differences from upstream
 
 Everything the CLI does is ported, including all nine workload kinds and all four metric
