@@ -100,7 +100,7 @@ The port was written test-first. Where behaviour is observable, the tests pin it
 - the Kubernetes layer is tested against a mock API server: every workload kind, the filters,
   the HPA fallback, job pagination and grouping, custom resources and pod lookups.
 
-CI runs the tests with clippy on every push and pull request, and daily on `main`, on Linux for
+CI runs the tests with clippy on every pull request, every push to `main` and daily, on Linux for
 amd64 and arm64.
 
 ## Differences from upstream
