@@ -2,10 +2,18 @@
 
 use std::process::Command;
 
-/// Runs the binary and returns success, stdout and stderr separately.
+/// Runs the binary with no cluster reachable - a kubeconfig that does not exist and no in-cluster
+/// environment - so it fails the same way on every machine instead of reaching whatever cluster
+/// the machine is configured for. Returns success, stdout and stderr separately.
 fn krr_streams(args: &[&str]) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_krr"))
         .args(args)
+        .env(
+            "KUBECONFIG",
+            std::env::temp_dir().join("krr-test-no-such-kubeconfig"),
+        )
+        .env_remove("KUBERNETES_SERVICE_HOST")
+        .env_remove("KUBERNETES_SERVICE_PORT")
         .output()
         .expect("krr runs");
     (
@@ -80,10 +88,10 @@ fn logs_never_reach_stdout() {
     // stdout carries the report, so a pipe into jq or a file must stay clean
     let (ok, stdout, stderr) = krr_streams(&["simple", "-p", "http://127.0.0.1:1", "-f", "json"]);
 
-    assert!(!ok, "the scan cannot succeed without a metrics store");
+    assert!(!ok, "the scan cannot succeed without a cluster");
     assert!(stdout.is_empty(), "stdout carried log output: {stdout}");
     assert!(
-        stderr.contains("127.0.0.1:1"),
+        stderr.contains("Could not connect to any cluster"),
         "the failure was not reported: {stderr}"
     );
 }
