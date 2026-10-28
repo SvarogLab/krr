@@ -1,4 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>SvarogLab/.github"]
+  "extends": ["github>SvarogLab/.github"],
+  "packageRules": [
+    {
+      "description": "kube pins the k8s-openapi minor it builds against. k8s-openapi moves in the pull request of the kube release that supports it.",
+      "matchPackageNames": ["k8s-openapi"],
+      "enabled": false
+    }
+  ]
 }
