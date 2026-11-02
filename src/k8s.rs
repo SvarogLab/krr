@@ -73,7 +73,7 @@ impl ClusterLoader {
 
         objects.extend(
             self.collect::<Deployment>(Kind::Deployment, &namespaces, &hpas, |item| {
-                let spec = item.spec.as_ref()?;
+                let spec = &item.spec;
                 Some((
                     containers(spec.template.spec.as_ref()),
                     Some(spec.selector.clone()),
@@ -83,7 +83,7 @@ impl ClusterLoader {
         );
         objects.extend(
             self.collect::<StatefulSet>(Kind::StatefulSet, &namespaces, &hpas, |item| {
-                let spec = item.spec.as_ref()?;
+                let spec = &item.spec;
                 Some((
                     containers(spec.template.spec.as_ref()),
                     Some(spec.selector.clone()),
@@ -93,7 +93,7 @@ impl ClusterLoader {
         );
         objects.extend(
             self.collect::<DaemonSet>(Kind::DaemonSet, &namespaces, &hpas, |item| {
-                let spec = item.spec.as_ref()?;
+                let spec = &item.spec;
                 Some((
                     containers(spec.template.spec.as_ref()),
                     Some(spec.selector.clone()),
