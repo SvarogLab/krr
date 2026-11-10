@@ -10,19 +10,22 @@ What this port is based on, what it covers, and what was left out on purpose.
 | Ported from commit | `d1ccf018da611590be8c620f1a9a6bcb0a9effd3` |
 | Commit date | 2026-09-01 |
 | Version at that commit | `1.8.2-dev` |
+| Reviewed up to | `e70b9fb36f00e8705c154bb4f6ca11d867bf83ca` (2026-11-05, after `v1.31.3`) |
 
 Only the `robusta_krr/` package is in scope. The `enforcer/` directory is a separate
-in-cluster component, not part of the CLI.
+in-cluster component, not part of the CLI. The `prometrix` pin in `pyproject.toml` is in scope
+too: it is the Prometheus client that `prometheus::client` replaces.
 
 ### Checking for upstream changes
 
 ```sh
 git clone --filter=blob:none https://github.com/robusta-dev/krr upstream
-git -C upstream log --oneline d1ccf018da611590be8c620f1a9a6bcb0a9effd3..HEAD -- robusta_krr
-git -C upstream diff d1ccf018da611590be8c620f1a9a6bcb0a9effd3..HEAD -- robusta_krr/strategies
+git -C upstream log --oneline e70b9fb36f00e8705c154bb4f6ca11d867bf83ca..HEAD -- robusta_krr pyproject.toml
+git -C upstream diff e70b9fb36f00e8705c154bb4f6ca11d867bf83ca..HEAD -- robusta_krr pyproject.toml
 ```
 
-After porting a newer change, update the commit above so the next comparison starts there.
+After each review, move "Reviewed up to" to the commit compared against, whether or not
+anything was ported; after porting a change, also note it in the sections below.
 
 ## Module map
 
