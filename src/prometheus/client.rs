@@ -35,6 +35,14 @@ impl Series {
     }
 }
 
+/// Whether a direct connection to `url` would take any certificate the server presents.
+fn accepts_any_certificate(url: &str, verify_tls: bool) -> bool {
+    !verify_tls
+        && url
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+}
+
 /// How requests reach Prometheus.
 pub enum Transport {
     /// Straight HTTP(S), optionally with extra headers.
@@ -63,7 +71,7 @@ impl PrometheusClient {
         name: &str,
         url: &str,
         headers: &BTreeMap<String, String>,
-        insecure_tls: bool,
+        verify_tls: bool,
     ) -> Result<Self> {
         let mut header_map = reqwest::header::HeaderMap::new();
         for (key, value) in headers {
@@ -75,9 +83,16 @@ impl PrometheusClient {
             );
         }
 
+        if accepts_any_certificate(url, verify_tls) {
+            tracing::warn!(
+                "the certificate of {name} at {url} is not verified; \
+                 pass --prometheus-ssl-enabled to verify it"
+            );
+        }
+
         let client = reqwest::Client::builder()
             .default_headers(header_map)
-            .danger_accept_invalid_certs(insecure_tls)
+            .danger_accept_invalid_certs(!verify_tls)
             .timeout(Duration::from_secs(120))
             .build()?;
 
@@ -653,5 +668,74 @@ mod tests {
                 .unwrap();
         unreachable.retries = 0;
         assert!(unreachable.check_connection().await.is_err());
+    }
+
+    /// An HTTPS store with a self-signed certificate, answering every request with `VECTOR`.
+    async fn self_signed_store() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let certified = rcgen::generate_simple_self_signed(["localhost".to_string()]).unwrap();
+        let key = tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(
+            certified.signing_key.serialize_der().into(),
+        );
+        let config = tokio_rustls::rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certified.cert.der().clone()], key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let Ok(mut tls) = acceptor.accept(stream).await else {
+                    continue;
+                };
+                let mut request = [0u8; 4096];
+                let _ = tls.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                     content-length: {}\r\nconnection: close\r\n\r\n{VECTOR}",
+                    VECTOR.len()
+                );
+                let _ = tls.write_all(response.as_bytes()).await;
+                let _ = tls.shutdown().await;
+            }
+        });
+        format!("https://localhost:{port}")
+    }
+
+    #[tokio::test]
+    async fn certificates_are_verified_only_when_ssl_is_enabled() {
+        let url = self_signed_store().await;
+        let store = |verify_tls| {
+            let mut client =
+                PrometheusClient::direct("Prometheus", &url, &BTreeMap::new(), verify_tls).unwrap();
+            client.retries = 0;
+            client
+        };
+
+        assert!(store(false).check_connection().await.is_ok());
+        assert!(store(true).check_connection().await.is_err());
+    }
+
+    #[test]
+    fn only_unverified_https_accepts_any_certificate() {
+        assert!(accepts_any_certificate(
+            "https://prometheus.example.com",
+            false
+        ));
+        assert!(accepts_any_certificate(
+            "HTTPS://prometheus.example.com",
+            false
+        ));
+        assert!(!accepts_any_certificate(
+            "https://prometheus.example.com",
+            true
+        ));
+        assert!(!accepts_any_certificate(
+            "http://prometheus.example.com",
+            false
+        ));
     }
 }

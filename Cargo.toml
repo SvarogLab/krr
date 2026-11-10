@@ -33,5 +33,7 @@ yaml_serde = "0.10.7"
 
 [dev-dependencies]
 csv = "1.4.0"
+rcgen = "0.14.10"
 tempfile = "3.27.0"
+tokio-rustls = "0.26.6"
 wiremock = "0.6.5"

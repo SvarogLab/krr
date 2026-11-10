@@ -113,7 +113,7 @@ pub struct RunArgs {
     )]
     pub prometheus_other_headers: Vec<String>,
 
-    /// Accept self-signed certificates when talking to Prometheus.
+    /// Verify the Prometheus TLS certificate; without it, any certificate is accepted.
     #[arg(long, help_heading = "Prometheus Settings")]
     pub prometheus_ssl_enabled: bool,
 
