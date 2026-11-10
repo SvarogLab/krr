@@ -1,2 +1,4 @@
 _upstream/
 target/
+# reports a scan writes here (-f html --fileoutput) describe a real cluster
+/*.html

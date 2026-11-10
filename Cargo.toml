@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Kubernetes Resource Recommender: right-size requests and limits from Prometheus usage data"
 license = "MIT"
-repository = "https://github.com/robusta-dev/krr"
+repository = "https://github.com/SvarogLab/krr"
 
 [dependencies]
 anyhow = "1.0.104"

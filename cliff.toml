@@ -33,7 +33,7 @@ trim = true
 render_always = true
 
 postprocessors = [
-  { pattern = '<REPO>', replace = "https://github.com/krr" },
+  { pattern = '<REPO>', replace = "https://github.com/SvarogLab/krr" },
   # Collapse excessive vertical whitespace introduced by templating.
   { pattern = "(\\r?\\n){3,}", replace = "\n\n" },
 ]
