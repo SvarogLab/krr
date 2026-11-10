@@ -93,6 +93,7 @@ The port was written test-first. Where behaviour is observable, the tests pin it
   `resource_units.py` (including its quirks, such as `1024` printing unscaled);
 - the CSV formatter reproduces the golden rows of upstream's
   `tests/formatters/test_csv_formatter.py`;
+- the YAML report is byte-for-byte what upstream's PyYAML formatter prints for the same scan;
 - percentiles interpolate exactly like `numpy.percentile`, which is also what
   Prometheus's `quantile_over_time` does;
 - the Prometheus client and loader are tested against a mock server (`wiremock`), including
@@ -115,5 +116,6 @@ module map, the full list of what was dropped and why, and the behavioural devia
 MIT, see [LICENSE](LICENSE). This is a port of [robusta-dev/krr](https://github.com/robusta-dev/krr),
 which is MIT licensed, so its copyright notice is kept alongside this one.
 
-Every dependency is permissive too: MIT, Apache-2.0, ISC, BSD, Zlib, Unicode-3.0 or CC0. There
-is no copyleft in the tree.
+Every dependency is permissive too: MIT, Apache-2.0, ISC, BSD-3-Clause, Unicode-3.0 or
+CDLA-Permissive-2.0. There is no copyleft in the tree; `cargo deny check` enforces that list from
+`deny.toml`.

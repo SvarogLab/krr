@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::result::ScanResult;
 
 pub fn render(result: &ScanResult) -> Result<String> {
-    Ok(serde_yaml_ng::to_string(result)?)
+    Ok(yaml_serde::to_string(result)?)
 }
 
 #[cfg(test)]
@@ -16,8 +16,16 @@ mod tests {
     #[test]
     fn round_trips_through_yaml() {
         let result = fixture();
-        let parsed: ScanResult = serde_yaml_ng::from_str(&render(&result).unwrap()).unwrap();
+        let parsed: ScanResult = yaml_serde::from_str(&render(&result).unwrap()).unwrap();
         assert_eq!(parsed, result);
+    }
+
+    /// `tests/fixtures/upstream_report.yaml` is upstream's formatter applied to this fixture:
+    /// `yaml.dump(json.loads(<json report>), sort_keys=False)` with PyYAML.
+    #[test]
+    fn matches_upstream_byte_for_byte() {
+        let expected = include_str!("../../tests/fixtures/upstream_report.yaml");
+        assert_eq!(render(&fixture()).unwrap(), expected);
     }
 
     #[test]
