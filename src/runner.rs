@@ -494,6 +494,37 @@ fn title_case(name: &str) -> String {
 mod tests {
     use super::*;
 
+    fn runner(config: Config) -> Runner {
+        let strategy = crate::strategy::find("simple", &Default::default()).unwrap();
+        Runner::new(config, strategy)
+    }
+
+    #[test]
+    fn output_goes_to_a_file_only_when_asked() {
+        assert_eq!(runner(Config::default()).output_path(), None);
+
+        let named = Config {
+            file_output: Some("report.json".into()),
+            ..Config::default()
+        };
+        assert_eq!(runner(named).output_path().as_deref(), Some("report.json"));
+
+        let dynamic = Config {
+            file_output_dynamic: true,
+            format: "yaml".into(),
+            ..Config::default()
+        };
+        let path = runner(dynamic).output_path().unwrap();
+        let stamp = path
+            .strip_prefix("krr-")
+            .and_then(|rest| rest.strip_suffix(".yaml"))
+            .unwrap_or_else(|| panic!("unexpected name: {path}"));
+        assert!(
+            stamp.len() == 14 && stamp.bytes().all(|byte| byte.is_ascii_digit()),
+            "{path}"
+        );
+    }
+
     #[test]
     fn dynamic_output_is_named_after_the_local_time_like_upstream() {
         let now = jiff::civil::date(2026, 3, 7).at(9, 5, 2, 0);
