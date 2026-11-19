@@ -443,11 +443,16 @@ impl Runner {
 
     fn output_path(&self) -> Option<String> {
         if self.config.file_output_dynamic {
-            let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-            return Some(format!("krr-{stamp}.{}", self.config.format));
+            let now = jiff::ZonedDateTime::now().datetime();
+            return Some(dynamic_output_name(now, &self.config.format));
         }
         self.config.file_output.clone()
     }
+}
+
+/// `krr-<local time>.<format>`, the name upstream gives a report written with `--fileoutput-dynamic`.
+fn dynamic_output_name(now: jiff::civil::DateTime, format: &str) -> String {
+    format!("krr-{}.{format}", now.strftime("%Y%m%d%H%M%S"))
 }
 
 /// Rounds a recommendation up to the smallest unit and applies the configured minimum.
@@ -488,6 +493,12 @@ fn title_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_output_is_named_after_the_local_time_like_upstream() {
+        let now = jiff::civil::date(2026, 3, 7).at(9, 5, 2, 0);
+        assert_eq!(dynamic_output_name(now, "json"), "krr-20260307090502.json");
+    }
 
     #[test]
     fn cpu_is_rounded_up_to_millicores() {
