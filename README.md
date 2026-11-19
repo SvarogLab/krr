@@ -16,6 +16,16 @@ Single static binary, no Python runtime, no cluster agent - KRR only reads.
 cargo build --release      # target/release/krr
 ```
 
+Each [release](https://github.com/SvarogLab/krr/releases) carries static musl builds for Linux,
+`krr-linux-amd64` and `krr-linux-arm64`, with their checksums in `SHA256SUMS`. Install one as `krr`
+on `PATH`.
+
+### Releasing
+
+Run the **Release PR** workflow from the Actions tab. It opens `chore: release vX.Y.Z` with the
+version git-cliff computes from the commits since the last tag and a regenerated `CHANGELOG.md`;
+merging it tags the commit and publishes the release.
+
 ## Usage
 
 ```sh
