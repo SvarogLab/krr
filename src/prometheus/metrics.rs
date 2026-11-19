@@ -224,13 +224,13 @@ mod tests {
     fn duration_literals_follow_upstream_rounding() {
         assert_eq!(step_literal(Duration::from_secs(75)), "75s");
         assert_eq!(duration_literal(Duration::from_secs(3600)), "60m");
-        assert_eq!(duration_literal(Duration::from_secs(24 * 3600)), "1440m");
-        assert_eq!(duration_literal(Duration::from_secs(14 * 24 * 3600)), "14d");
+        assert_eq!(duration_literal(Duration::from_hours(24)), "1440m");
+        assert_eq!(duration_literal(Duration::from_hours(14 * 24)), "14d");
     }
 
     #[test]
     fn range_steps_stay_inside_the_point_budget() {
-        let fortnight = Duration::from_secs(14 * 24 * 3600);
+        let fortnight = Duration::from_hours(14 * 24);
 
         // the defaults ask for 16128 points, which prometheus rejects
         let step = range_step(fortnight, Duration::from_secs(75));
@@ -280,7 +280,7 @@ mod tests {
             Metric::MaxOomKilledMemory,
         ] {
             let query = metric.query(&object(), "14d", "75s", cluster);
-            assert!(query.contains(r#"cluster="prod""#), "{:?}: {query}", metric);
+            assert!(query.contains(r#"cluster="prod""#), "{metric:?}: {query}");
         }
     }
 

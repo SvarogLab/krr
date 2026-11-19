@@ -64,9 +64,9 @@ pub fn format_with_base(value: f64, base: f64) -> String {
 /// Renders a float the way `str()` does in python: integral values keep one decimal.
 fn python_float(value: f64) -> String {
     if value.fract() == 0.0 {
-        std::format!("{:.1}", value)
+        std::format!("{value:.1}")
     } else {
-        std::format!("{}", value)
+        std::format!("{value}")
     }
 }
 

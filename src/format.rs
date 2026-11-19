@@ -208,8 +208,7 @@ pub(crate) mod tests {
 
     /// The fixture mirrors upstream's `tests/formatters/test_csv_formatter.py` data.
     pub fn fixture() -> ScanResult {
-        serde_json::from_str(include_str!("../../tests/fixtures/result.json"))
-            .expect("valid fixture")
+        serde_json::from_str(include_str!("../tests/fixtures/result.json")).expect("valid fixture")
     }
 
     #[test]

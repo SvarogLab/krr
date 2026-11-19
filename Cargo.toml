@@ -35,3 +35,11 @@ rcgen = "0.14.10"
 tempfile = "3.27.0"
 tokio-rustls = "0.26.6"
 wiremock = "0.6.5"
+
+[lints.clippy]
+# A module with submodules lives in `name.rs` beside `name/`, not in `name/mod.rs`.
+mod_module_files = "warn"
+# Pedantic lints taken one by one: each enforces an idiom of current Rust.
+duration_suboptimal_units = "warn"
+manual_let_else = "warn"
+uninlined_format_args = "warn"
