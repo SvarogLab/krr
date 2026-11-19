@@ -443,11 +443,16 @@ impl Runner {
 
     fn output_path(&self) -> Option<String> {
         if self.config.file_output_dynamic {
-            let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-            return Some(format!("krr-{stamp}.{}", self.config.format));
+            let now = jiff::ZonedDateTime::now().datetime();
+            return Some(dynamic_output_name(now, &self.config.format));
         }
         self.config.file_output.clone()
     }
+}
+
+/// `krr-<local time>.<format>`, the name upstream gives a report written with `--fileoutput-dynamic`.
+fn dynamic_output_name(now: jiff::civil::DateTime, format: &str) -> String {
+    format!("krr-{}.{format}", now.strftime("%Y%m%d%H%M%S"))
 }
 
 /// Rounds a recommendation up to the smallest unit and applies the configured minimum.
@@ -488,6 +493,43 @@ fn title_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runner(config: Config) -> Runner {
+        let strategy = crate::strategy::find("simple", &Default::default()).unwrap();
+        Runner::new(config, strategy)
+    }
+
+    #[test]
+    fn output_goes_to_a_file_only_when_asked() {
+        assert_eq!(runner(Config::default()).output_path(), None);
+
+        let named = Config {
+            file_output: Some("report.json".into()),
+            ..Config::default()
+        };
+        assert_eq!(runner(named).output_path().as_deref(), Some("report.json"));
+
+        let dynamic = Config {
+            file_output_dynamic: true,
+            format: "yaml".into(),
+            ..Config::default()
+        };
+        let path = runner(dynamic).output_path().unwrap();
+        let stamp = path
+            .strip_prefix("krr-")
+            .and_then(|rest| rest.strip_suffix(".yaml"))
+            .unwrap_or_else(|| panic!("unexpected name: {path}"));
+        assert!(
+            stamp.len() == 14 && stamp.bytes().all(|byte| byte.is_ascii_digit()),
+            "{path}"
+        );
+    }
+
+    #[test]
+    fn dynamic_output_is_named_after_the_local_time_like_upstream() {
+        let now = jiff::civil::date(2026, 3, 7).at(9, 5, 2, 0);
+        assert_eq!(dynamic_output_name(now, "json"), "krr-20260307090502.json");
+    }
 
     #[test]
     fn cpu_is_rounded_up_to_millicores() {
