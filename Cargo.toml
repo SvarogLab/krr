@@ -25,14 +25,12 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "q
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 strip-ansi-escapes = "0.2.1"
-thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time", "sync", "fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 yaml_serde = "0.10.7"
 
 [dev-dependencies]
-csv = "1.4.0"
 rcgen = "0.14.10"
 tempfile = "3.27.0"
 tokio-rustls = "0.26.6"
