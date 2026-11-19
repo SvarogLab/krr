@@ -68,3 +68,5 @@ sort_commits = "oldest"
 [bump]
 # Before 1.0, a breaking change raises the minor version.
 breaking_always_bump_major = false
+# With no tag yet, git-cliff proposes `0.1.0`, which the `v` tag pattern refuses.
+initial_tag = "v0.1.0"

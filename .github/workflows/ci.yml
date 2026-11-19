@@ -1,3 +1,5 @@
+# A merged `chore: release vX` commit is tagged and released with the Linux binaries built in the
+# same run.
 name: CI
 
 on:
@@ -13,3 +15,27 @@ permissions:
 jobs:
   rust:
     uses: SvarogLab/.github/.github/workflows/rust.yml@v3
+    with:
+      binaries: krr
+
+  tag:
+    needs: rust
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: SvarogLab/.github/.github/workflows/tag-release.yml@v3
+    permissions:
+      contents: write
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    uses: SvarogLab/.github/.github/workflows/release.yml@v3
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      download-binaries: true
+      prepare: |
+        cp binaries/amd64/release/krr krr-linux-amd64
+        cp binaries/arm64/release/krr krr-linux-arm64
+        sha256sum krr-linux-* > SHA256SUMS
+      assets: krr-linux-amd64 krr-linux-arm64 SHA256SUMS
