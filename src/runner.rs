@@ -300,22 +300,19 @@ impl Runner {
     /// Warns when the store holds less history than the strategy needs.
     async fn check_history(&mut self, context: &ClusterContext) {
         let settings = self.strategy.common();
-        let range = match context
+        let Ok(range) = context
             .metrics
-            .history_range(std::time::Duration::from_secs(5 * 3600))
+            .history_range(std::time::Duration::from_hours(5))
             .await
-        {
-            Ok(range) => range,
-            Err(_) => {
-                tracing::info!(
-                    "Unable to check how much historical data is available. Will assume it is \
-                     sufficient and calculate recommendations anyway. (Not all Prometheus \
-                     compatible metric stores support checking history settings.)"
-                );
-                self.errors
-                    .push(serde_json::json!({"name": "HistoryRangeError"}));
-                return;
-            }
+        else {
+            tracing::info!(
+                "Unable to check how much historical data is available. Will assume it is \
+                 sufficient and calculate recommendations anyway. (Not all Prometheus \
+                 compatible metric stores support checking history settings.)"
+            );
+            self.errors
+                .push(serde_json::json!({"name": "HistoryRangeError"}));
+            return;
         };
 
         let available = std::time::Duration::from_secs_f64((range.1 - range.0).max(0.0));

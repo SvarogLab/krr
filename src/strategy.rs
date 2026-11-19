@@ -99,7 +99,7 @@ impl CommonSettings {
 
     /// Upstream requires at least three hours of history for the simple strategies.
     pub fn history_range_enough(&self, range: Duration) -> bool {
-        range >= Duration::from_secs(3 * 3600)
+        range >= Duration::from_hours(3)
     }
 }
 
@@ -409,8 +409,8 @@ pub(crate) mod tests {
     #[test]
     fn three_hours_of_history_are_enough() {
         let settings = CommonSettings::default();
-        assert!(!settings.history_range_enough(Duration::from_secs(2 * 3600)));
-        assert!(settings.history_range_enough(Duration::from_secs(3 * 3600)));
+        assert!(!settings.history_range_enough(Duration::from_hours(2)));
+        assert!(settings.history_range_enough(Duration::from_hours(3)));
     }
 
     #[test]

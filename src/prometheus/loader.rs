@@ -639,16 +639,10 @@ mod tests {
 
     #[test]
     fn owner_period_is_capped_at_32_units() {
-        assert_eq!(owner_period_literal(Duration::from_secs(3 * 3600)), "3h");
-        assert_eq!(owner_period_literal(Duration::from_secs(24 * 3600)), "24h");
-        assert_eq!(
-            owner_period_literal(Duration::from_secs(14 * 24 * 3600)),
-            "14d"
-        );
-        assert_eq!(
-            owner_period_literal(Duration::from_secs(90 * 24 * 3600)),
-            "32d"
-        );
+        assert_eq!(owner_period_literal(Duration::from_hours(3)), "3h");
+        assert_eq!(owner_period_literal(Duration::from_hours(24)), "24h");
+        assert_eq!(owner_period_literal(Duration::from_hours(14 * 24)), "14d");
+        assert_eq!(owner_period_literal(Duration::from_hours(90 * 24)), "32d");
     }
 
     #[tokio::test]
@@ -662,7 +656,7 @@ mod tests {
             .await;
 
         let (start, end) = loader(&server)
-            .history_range(Duration::from_secs(5 * 3600))
+            .history_range(Duration::from_hours(5))
             .await
             .unwrap();
         assert_eq!((start, end), (1700000000.0, 1700003600.0));
