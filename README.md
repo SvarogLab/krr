@@ -87,6 +87,8 @@ have the same shape as upstream's, so existing consumers keep working.
 cargo test
 ```
 
+Formatting, lints, layout and error handling follow [`docs/CODESTYLE.md`](docs/CODESTYLE.md).
+
 The port was written test-first. Where behaviour is observable, the tests pin it to upstream's:
 
 - unit formatting is checked against values produced by upstream's own
