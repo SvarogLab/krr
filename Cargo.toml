@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/SvarogLab/krr"
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 clap = { version = "4.6.9", features = ["derive", "env"] }
 comfy-table = { version = "8.0.1", features = ["custom_styling"] }
 csv = "1.4.0"
